@@ -12,7 +12,7 @@ type SignalMessage = {
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
-export default function CallPage() {
+export default function ListenerPage() {
   const params = useSearchParams();
   const router = useRouter();
   const sessionId = params.get("sessionId") as string;
@@ -24,6 +24,7 @@ export default function CallPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const startedRef = useRef(false);
   const endedRef = useRef(false);
+  const readySentRef = useRef(false);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -32,12 +33,9 @@ export default function CallPage() {
   const [seconds, setSeconds] = useState(0);
   const [connected, setConnected] = useState(false);
 
-  // Live timer — starts when remote video connects
   useEffect(() => {
     if (connected) {
-      timerRef.current = setInterval(() => {
-        setSeconds((s) => s + 1);
-      }, 1000);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -80,60 +78,65 @@ export default function CallPage() {
     endedRef.current = true;
     cleanup();
     api.endSession(sessionId).catch(console.error);
-    setTimeout(() => router.push("/dashboard"), 1000);
+    setTimeout(() => router.push("/listener-dashboard"), 1000);
   };
 
-  const connectWebSocket = (pc: RTCPeerConnection) => {
+  const sendReady = (client: Client) => {
+    if (readySentRef.current) return;
+    readySentRef.current = true;
+    client.publish({
+      destination: "/app/signal",
+      body: JSON.stringify({ type: "ready", sessionId }),
+    });
+  };
+
+  const connectWebSocket = () => {
     const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
     const socket = new SockJS(`${BASE}/ws`);
 
     const client = new Client({
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
-      onConnect: async () => {
+      onConnect: () => {
         client.subscribe("/topic/signal", async (msg) => {
           const data: SignalMessage = JSON.parse(msg.body);
           if (data.sessionId !== sessionId) return;
 
-          const peer = pcRef.current;
-          if (!peer) return;
+          const pc = pcRef.current;
+          if (!pc) return;
 
-          if (data.type === "ready") {
-            const offer = await peer.createOffer();
-            await peer.setLocalDescription(offer);
-            client.publish({
-              destination: "/app/signal",
-              body: JSON.stringify({ type: "offer", sessionId, payload: offer }),
-            });
-          }
+          if (data.type === "user_waiting") sendReady(client);
 
-          if (data.type === "answer") {
-            if (peer.signalingState !== "have-local-offer") return;
-            await peer.setRemoteDescription(
+          if (data.type === "offer") {
+            if (pc.signalingState !== "stable") return;
+            await pc.setRemoteDescription(
               new RTCSessionDescription(data.payload as RTCSessionDescriptionInit)
             );
             for (const c of pendingCandidatesRef.current) {
-              try { await peer.addIceCandidate(c); } catch {}
+              try { await pc.addIceCandidate(c); } catch {}
             }
             pendingCandidatesRef.current = [];
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            client.publish({
+              destination: "/app/signal",
+              body: JSON.stringify({ type: "answer", sessionId, payload: answer }),
+            });
           }
 
           if (data.type === "candidate") {
-            if (peer.remoteDescription) {
-              try { await peer.addIceCandidate(data.payload as RTCIceCandidateInit); } catch {}
+            if (pc.remoteDescription) {
+              try { await pc.addIceCandidate(data.payload as RTCIceCandidateInit); } catch {}
             } else {
               pendingCandidatesRef.current.push(data.payload as RTCIceCandidateInit);
             }
           }
 
           if (data.type === "end") handleRemoteEnd();
-          if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
         });
 
-        client.publish({
-          destination: "/app/signal",
-          body: JSON.stringify({ type: "user_waiting", sessionId }),
-        });
+        sendReady(client);
       },
     });
 
@@ -141,7 +144,7 @@ export default function CallPage() {
     stompRef.current = client;
   };
 
-  const startCall = async () => {
+  const startListener = async () => {
     if (startedRef.current) return;
     startedRef.current = true;
 
@@ -160,7 +163,7 @@ export default function CallPage() {
     pc.ontrack = (event) => {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
-        setConnected(true); // ✅ start timer when remote arrives
+        setConnected(true);
       }
     };
 
@@ -173,11 +176,11 @@ export default function CallPage() {
       }
     };
 
-    connectWebSocket(pc);
+    connectWebSocket();
   };
 
   useEffect(() => {
-    startCall();
+    startListener();
     return () => { cleanup(); };
   }, []);
 
@@ -194,7 +197,7 @@ export default function CallPage() {
 
     await api.endSession(sessionId);
     cleanup();
-    router.push("/dashboard");
+    router.push("/listener-dashboard");
   };
 
   return (
@@ -208,7 +211,6 @@ export default function CallPage() {
       fontFamily: "'DM Sans', sans-serif",
       padding: 24,
     }}>
-      {/* Timer + status */}
       <div style={{ marginBottom: 20, textAlign: "center" }}>
         <div style={{
           fontSize: 36,
@@ -219,18 +221,12 @@ export default function CallPage() {
         }}>
           {formatTime(seconds)}
         </div>
-        <div style={{
-          fontSize: 12,
-          marginTop: 4,
-          color: connected ? "#22c55e" : "#f59e0b",
-        }}>
+        <div style={{ fontSize: 12, marginTop: 4, color: connected ? "#22c55e" : "#f59e0b" }}>
           {connected ? "● Connected" : "● Connecting..."}
         </div>
       </div>
 
-      {/* Videos */}
       <div style={{ position: "relative", marginBottom: 24 }}>
-        {/* Remote — large */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -244,8 +240,6 @@ export default function CallPage() {
             display: "block",
           }}
         />
-
-        {/* Local — small overlay */}
         <div style={{
           position: "absolute",
           bottom: 12,
@@ -285,70 +279,42 @@ export default function CallPage() {
         </div>
       </div>
 
-      {/* Controls */}
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-        {/* Mute */}
         <button
           onClick={toggleMute}
           style={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 20,
-            background: muted ? "#ef4444" : "#2a2a2a",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            width: 52, height: 52, borderRadius: "50%", border: "none",
+            cursor: "pointer", fontSize: 20,
+            background: muted ? "#ef4444" : "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
             transition: "background 0.2s",
           }}
-          title={muted ? "Unmute" : "Mute"}
         >
           {muted ? "🔇" : "🎙"}
         </button>
 
-        {/* End call */}
         <button
           onClick={handleEndCall}
           style={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 24,
-            background: "#ef4444",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            width: 64, height: 64, borderRadius: "50%", border: "none",
+            cursor: "pointer", fontSize: 24,
+            background: "#ef4444", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
             boxShadow: "0 0 0 4px #ef444433",
           }}
-          title="End call"
         >
           📵
         </button>
 
-        {/* Camera */}
         <button
           onClick={toggleCamera}
           style={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 20,
-            background: cameraOff ? "#ef4444" : "#2a2a2a",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            width: 52, height: 52, borderRadius: "50%", border: "none",
+            cursor: "pointer", fontSize: 20,
+            background: cameraOff ? "#ef4444" : "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
             transition: "background 0.2s",
           }}
-          title={cameraOff ? "Turn camera on" : "Turn camera off"}
         >
           {cameraOff ? "🚫" : "🎥"}
         </button>

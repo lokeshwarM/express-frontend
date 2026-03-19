@@ -48,8 +48,9 @@ export default function Home() {
       />
 
       <br /><br />
-
+      <p>Do not have account? <a href="/signup">Signup</a></p>
       <button onClick={handleLogin}>Login</button>
+      
 
       <pre>{JSON.stringify(result, null, 2)}</pre>
     </div>
