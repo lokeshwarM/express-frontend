@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
 import { api } from "@/services/api";
+import AuthGuard from "@/components/AuthGuard";
 
 type User = { id: string; email: string; role: string };
 type IncomingCall = { sessionId: string; callType: string };
@@ -98,6 +99,7 @@ export default function ListenerDashboard() {
   };
 
   return (
+     <AuthGuard>
     <div style={{
       minHeight: "100vh",
       background: "#0f0f0f",
@@ -306,5 +308,6 @@ export default function ListenerDashboard() {
         }
       `}</style>
     </div>
+    </AuthGuard>
   );
 }

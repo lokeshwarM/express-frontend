@@ -5,9 +5,10 @@ import { useSearchParams, useRouter } from "next/navigation";
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
 import { api } from "@/services/api";
+import AuthGuard from "@/components/AuthGuard";
 
 type SignalMessage = {
-  type: "offer" | "answer" | "candidate" | "end" | "reject" | "ready" | "user_waiting";
+  type: "offer" | "answer" | "candidate" | "end" | "reject" | "ready" | "user_waiting" | "session_ended";
   sessionId: string;
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
@@ -31,6 +32,8 @@ export default function CallPage() {
   const [cameraOff, setCameraOff] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [ending, setEnding] = useState(false);
+  const [volume, setVolume] = useState(1);
 
   // Live timer — starts when remote video connects
   useEffect(() => {
@@ -43,6 +46,12 @@ export default function CallPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [connected]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.volume = volume;
+    }
+  }, [volume]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -64,6 +73,14 @@ export default function CallPage() {
     setCameraOff((c) => !c);
   };
 
+  const increaseVolume = () => {
+    setVolume((v) => Math.min(1, v + 0.2));
+  };
+
+  const decreaseVolume = () => {
+    setVolume((v) => Math.max(0, v - 0.2));
+  };
+
   const cleanup = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -75,12 +92,13 @@ export default function CallPage() {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
 
+  // Called when the OTHER side ends the call (listener ends or backend notifies)
   const handleRemoteEnd = () => {
     if (endedRef.current) return;
     endedRef.current = true;
     cleanup();
-    api.endSession(sessionId).catch(console.error);
-    setTimeout(() => router.push("/dashboard"), 1000);
+    // Don't call endSession again — the other side already did it
+    setTimeout(() => router.push("/dashboard"), 800);
   };
 
   const connectWebSocket = (pc: RTCPeerConnection) => {
@@ -91,6 +109,8 @@ export default function CallPage() {
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
       onConnect: async () => {
+
+        // ✅ Subscribe to general signal topic
         client.subscribe("/topic/signal", async (msg) => {
           const data: SignalMessage = JSON.parse(msg.body);
           if (data.sessionId !== sessionId) return;
@@ -130,6 +150,14 @@ export default function CallPage() {
           if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
         });
 
+        //  Subscribe to session-specific topic for backend session_ended events
+        client.subscribe(`/topic/session/${sessionId}`, (msg) => {
+          const data = JSON.parse(msg.body);
+          if (data.type === "session_ended") {
+            handleRemoteEnd();
+          }
+        });
+
         client.publish({
           destination: "/app/signal",
           body: JSON.stringify({ type: "user_waiting", sessionId }),
@@ -160,7 +188,7 @@ export default function CallPage() {
     pc.ontrack = (event) => {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
-        setConnected(true); // ✅ start timer when remote arrives
+        setConnected(true);
       }
     };
 
@@ -179,12 +207,26 @@ export default function CallPage() {
   useEffect(() => {
     startCall();
     return () => { cleanup(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const interval = setInterval(() => {
+      api.heartbeat(sessionId).catch(() => {});
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  //  Fixed: properly awaits endSession and handles errors, no silent swallow
   const handleEndCall = async () => {
     if (endedRef.current) return;
     endedRef.current = true;
+    setEnding(true);
 
+    // Tell the other side via WebSocket
     if (stompRef.current?.connected) {
       stompRef.current.publish({
         destination: "/app/signal",
@@ -192,171 +234,205 @@ export default function CallPage() {
       });
     }
 
-    await api.endSession(sessionId);
-    cleanup();
-    router.push("/dashboard");
+    try {
+      const result = await api.endSession(sessionId);
+      if (result && !result.success) {
+        console.error("End session failed:", result.message);
+      }
+    } catch (e) {
+      console.error("End session error:", e);
+    } finally {
+      cleanup();
+      router.push("/dashboard");
+    }
   };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#0a0a0a",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      fontFamily: "'DM Sans', sans-serif",
-      padding: 24,
-    }}>
-      {/* Timer + status */}
-      <div style={{ marginBottom: 20, textAlign: "center" }}>
-        <div style={{
-          fontSize: 36,
-          fontWeight: 700,
-          color: "#fff",
-          letterSpacing: 2,
-          fontVariantNumeric: "tabular-nums",
-        }}>
-          {formatTime(seconds)}
+    <AuthGuard>
+      <div style={{
+        minHeight: "100vh",
+        background: "#0a0a0a",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'DM Sans', sans-serif",
+        padding: 24,
+      }}>
+        {/* Timer + status */}
+        <div style={{ marginBottom: 20, textAlign: "center" }}>
+          <div style={{
+            fontSize: 36,
+            fontWeight: 700,
+            color: "#fff",
+            letterSpacing: 2,
+            fontVariantNumeric: "tabular-nums",
+          }}>
+            {formatTime(seconds)}
+          </div>
+          <div style={{
+            fontSize: 12,
+            marginTop: 4,
+            color: connected ? "#22c55e" : "#f59e0b",
+          }}>
+            {ending ? "● Ending call..." : connected ? "● Connected" : "● Connecting..."}
+          </div>
         </div>
-        <div style={{
-          fontSize: 12,
-          marginTop: 4,
-          color: connected ? "#22c55e" : "#f59e0b",
-        }}>
-          {connected ? "● Connected" : "● Connecting..."}
-        </div>
-      </div>
 
-      {/* Videos */}
-      <div style={{ position: "relative", marginBottom: 24 }}>
-        {/* Remote — large */}
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          style={{
-            width: "min(480px, 90vw)",
-            aspectRatio: "4/3",
-            borderRadius: 16,
-            background: "#1a1a1a",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
-
-        {/* Local — small overlay */}
-        <div style={{
-          position: "absolute",
-          bottom: 12,
-          right: 12,
-          width: 100,
-          borderRadius: 10,
-          overflow: "hidden",
-          border: "2px solid #333",
-          background: "#111",
-        }}>
+        {/* Videos */}
+        <div style={{ position: "relative", marginBottom: 24 }}>
+          {/* Remote — large */}
           <video
-            ref={localVideoRef}
+            ref={remoteVideoRef}
             autoPlay
             playsInline
-            muted
             style={{
-              width: "100%",
+              width: "min(480px, 90vw)",
               aspectRatio: "4/3",
+              borderRadius: 16,
+              background: "#1a1a1a",
               objectFit: "cover",
               display: "block",
-              opacity: cameraOff ? 0.2 : 1,
             }}
           />
-          {cameraOff && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
+
+          {/* Local — small overlay */}
+          <div style={{
+            position: "absolute",
+            bottom: 12,
+            right: 12,
+            width: 100,
+            borderRadius: 10,
+            overflow: "hidden",
+            border: "2px solid #333",
+            background: "#111",
+          }}>
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                width: "100%",
+                aspectRatio: "4/3",
+                objectFit: "cover",
+                display: "block",
+                opacity: cameraOff ? 0.2 : 1,
+              }}
+            />
+            {cameraOff && (
+              <div style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontSize: 20,
+              }}>
+                🚫
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          {/* Mute */}
+          <button
+            onClick={toggleMute}
+            style={{
+              width: 52, height: 52, borderRadius: "50%",
+              border: "none", cursor: "pointer", fontSize: 20,
+              background: muted ? "#ef4444" : "#2a2a2a",
+              color: "#fff", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              transition: "background 0.2s",
+            }}
+            title={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? "🔇" : "🎙"}
+          </button>
+
+          {/* End call */}
+          <button
+            onClick={handleEndCall}
+            disabled={ending}
+            style={{
+              width: 64, height: 64, borderRadius: "50%",
+              border: "none", cursor: ending ? "not-allowed" : "pointer",
+              fontSize: 24, background: ending ? "#7f1d1d" : "#ef4444",
+              color: "#fff", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              boxShadow: "0 0 0 4px #ef444433",
+              opacity: ending ? 0.7 : 1,
+            }}
+            title="End call"
+          >
+            📵
+          </button>
+
+          {/* Camera */}
+          <button
+            onClick={toggleCamera}
+            style={{
+              width: 52, height: 52, borderRadius: "50%",
+              border: "none", cursor: "pointer", fontSize: 20,
+              background: cameraOff ? "#ef4444" : "#2a2a2a",
+              color: "#fff", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              transition: "background 0.2s",
+            }}
+            title={cameraOff ? "Turn camera on" : "Turn camera off"}
+          >
+            {cameraOff ? "🚫" : "🎥"}
+          </button>
+
+          {/* Volume Down */}
+          <button
+            onClick={decreaseVolume}
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: "50%",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 20,
+              background: "#2a2a2a",
+              color: "#fff",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "#fff",
+            }}
+          >
+            🔉
+          </button>
+
+          {/* Volume Up */}
+          <button
+            onClick={increaseVolume}
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: "50%",
+              border: "none",
+              cursor: "pointer",
               fontSize: 20,
-            }}>
-              🚫
-            </div>
-          )}
+              background: "#2a2a2a",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            🔊
+          </button>
         </div>
+
+        <p style={{ color: "#333", fontSize: 11, marginTop: 16 }}>
+          Session {sessionId?.slice(0, 8)}...
+        </p>
       </div>
-
-      {/* Controls */}
-      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-        {/* Mute */}
-        <button
-          onClick={toggleMute}
-          style={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 20,
-            background: muted ? "#ef4444" : "#2a2a2a",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "background 0.2s",
-          }}
-          title={muted ? "Unmute" : "Mute"}
-        >
-          {muted ? "🔇" : "🎙"}
-        </button>
-
-        {/* End call */}
-        <button
-          onClick={handleEndCall}
-          style={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 24,
-            background: "#ef4444",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 0 0 4px #ef444433",
-          }}
-          title="End call"
-        >
-          📵
-        </button>
-
-        {/* Camera */}
-        <button
-          onClick={toggleCamera}
-          style={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 20,
-            background: cameraOff ? "#ef4444" : "#2a2a2a",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "background 0.2s",
-          }}
-          title={cameraOff ? "Turn camera on" : "Turn camera off"}
-        >
-          {cameraOff ? "🚫" : "🎥"}
-        </button>
-      </div>
-
-      <p style={{ color: "#333", fontSize: 11, marginTop: 16 }}>
-        Session {sessionId?.slice(0, 8)}...
-      </p>
-    </div>
+    </AuthGuard>
   );
 }

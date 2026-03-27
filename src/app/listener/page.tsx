@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
 import { api } from "@/services/api";
+import AuthGuard from "@/components/AuthGuard";
 
 type SignalMessage = {
   type: "offer" | "answer" | "candidate" | "end" | "reject" | "ready" | "user_waiting";
@@ -201,6 +202,7 @@ export default function ListenerPage() {
   };
 
   return (
+    <AuthGuard>
     <div style={{
       minHeight: "100vh",
       background: "#0a0a0a",
@@ -324,5 +326,6 @@ export default function ListenerPage() {
         Session {sessionId?.slice(0, 8)}...
       </p>
     </div>
+    </AuthGuard>
   );
 }

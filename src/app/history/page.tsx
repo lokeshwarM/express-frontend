@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/services/api";
+import AuthGuard from "@/components/AuthGuard";
 
 type Session = {
   id: string;
@@ -75,6 +76,7 @@ export default function HistoryPage() {
   }, []);
 
   return (
+     <AuthGuard>
     <div style={{
       minHeight: "100vh",
       background: "#0f0f0f",
@@ -238,5 +240,6 @@ export default function HistoryPage() {
         )}
       </div>
     </div>
+    </AuthGuard>
   );
 }
