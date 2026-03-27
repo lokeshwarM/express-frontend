@@ -35,16 +35,11 @@ export default function CallPage() {
   const [ending, setEnding] = useState(false);
   const [volume, setVolume] = useState(1);
 
-  // Live timer — starts when remote video connects
   useEffect(() => {
     if (connected) {
-      timerRef.current = setInterval(() => {
-        setSeconds((s) => s + 1);
-      }, 1000);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
     }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [connected]);
 
   useEffect(() => {
@@ -73,13 +68,8 @@ export default function CallPage() {
     setCameraOff((c) => !c);
   };
 
-  const increaseVolume = () => {
-    setVolume((v) => Math.min(1, v + 0.2));
-  };
-
-  const decreaseVolume = () => {
-    setVolume((v) => Math.max(0, v - 0.2));
-  };
+  const increaseVolume = () => setVolume((v) => Math.min(1, parseFloat((v + 0.2).toFixed(1))));
+  const decreaseVolume = () => setVolume((v) => Math.max(0, parseFloat((v - 0.2).toFixed(1))));
 
   const cleanup = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -92,12 +82,12 @@ export default function CallPage() {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
 
-  // Called when the OTHER side ends the call (listener ends or backend notifies)
+  // ✅ FIX: Remote end means the LISTENER already called endSession.
+  // User side must NOT call endSession again — just clean up and redirect.
   const handleRemoteEnd = () => {
     if (endedRef.current) return;
     endedRef.current = true;
     cleanup();
-    // Don't call endSession again — the other side already did it
     setTimeout(() => router.push("/dashboard"), 800);
   };
 
@@ -110,7 +100,6 @@ export default function CallPage() {
       reconnectDelay: 5000,
       onConnect: async () => {
 
-        // ✅ Subscribe to general signal topic
         client.subscribe("/topic/signal", async (msg) => {
           const data: SignalMessage = JSON.parse(msg.body);
           if (data.sessionId !== sessionId) return;
@@ -146,16 +135,15 @@ export default function CallPage() {
             }
           }
 
+          // ✅ FIX: listener ended the call — just redirect, don't call endSession
           if (data.type === "end") handleRemoteEnd();
           if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
         });
 
-        //  Subscribe to session-specific topic for backend session_ended events
+        // Subscribe to session-specific topic for backend-triggered session_ended
         client.subscribe(`/topic/session/${sessionId}`, (msg) => {
           const data = JSON.parse(msg.body);
-          if (data.type === "session_ended") {
-            handleRemoteEnd();
-          }
+          if (data.type === "session_ended") handleRemoteEnd();
         });
 
         client.publish({
@@ -207,26 +195,16 @@ export default function CallPage() {
   useEffect(() => {
     startCall();
     return () => { cleanup(); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const interval = setInterval(() => {
-      api.heartbeat(sessionId).catch(() => {});
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [sessionId]);
-
-  //  Fixed: properly awaits endSession and handles errors, no silent swallow
+  // ✅ User clicks End — user is the one who calls endSession (single source of truth)
   const handleEndCall = async () => {
     if (endedRef.current) return;
     endedRef.current = true;
     setEnding(true);
 
-    // Tell the other side via WebSocket
+    // Notify listener via WebSocket to clean up their side
     if (stompRef.current?.connected) {
       stompRef.current.publish({
         destination: "/app/signal",
@@ -234,6 +212,7 @@ export default function CallPage() {
       });
     }
 
+    // Only user side calls endSession — billing happens once
     try {
       const result = await api.endSession(sessionId);
       if (result && !result.success) {
@@ -270,18 +249,13 @@ export default function CallPage() {
           }}>
             {formatTime(seconds)}
           </div>
-          <div style={{
-            fontSize: 12,
-            marginTop: 4,
-            color: connected ? "#22c55e" : "#f59e0b",
-          }}>
+          <div style={{ fontSize: 12, marginTop: 4, color: connected ? "#22c55e" : "#f59e0b" }}>
             {ending ? "● Ending call..." : connected ? "● Connected" : "● Connecting..."}
           </div>
         </div>
 
         {/* Videos */}
         <div style={{ position: "relative", marginBottom: 24 }}>
-          {/* Remote — large */}
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -295,12 +269,9 @@ export default function CallPage() {
               display: "block",
             }}
           />
-
-          {/* Local — small overlay */}
           <div style={{
             position: "absolute",
-            bottom: 12,
-            right: 12,
+            bottom: 12, right: 12,
             width: 100,
             borderRadius: 10,
             overflow: "hidden",
@@ -322,13 +293,9 @@ export default function CallPage() {
             />
             {cameraOff && (
               <div style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#fff",
-                fontSize: 20,
+                position: "absolute", inset: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 20,
               }}>
                 🚫
               </div>
@@ -338,95 +305,51 @@ export default function CallPage() {
 
         {/* Controls */}
         <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          {/* Mute */}
-          <button
-            onClick={toggleMute}
-            style={{
-              width: 52, height: 52, borderRadius: "50%",
-              border: "none", cursor: "pointer", fontSize: 20,
-              background: muted ? "#ef4444" : "#2a2a2a",
-              color: "#fff", display: "flex",
-              alignItems: "center", justifyContent: "center",
-              transition: "background 0.2s",
-            }}
-            title={muted ? "Unmute" : "Mute"}
-          >
+          <button onClick={toggleMute} style={{
+            width: 52, height: 52, borderRadius: "50%",
+            border: "none", cursor: "pointer", fontSize: 20,
+            background: muted ? "#ef4444" : "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "background 0.2s",
+          }} title={muted ? "Unmute" : "Mute"}>
             {muted ? "🔇" : "🎙"}
           </button>
 
-          {/* End call */}
-          <button
-            onClick={handleEndCall}
-            disabled={ending}
-            style={{
-              width: 64, height: 64, borderRadius: "50%",
-              border: "none", cursor: ending ? "not-allowed" : "pointer",
-              fontSize: 24, background: ending ? "#7f1d1d" : "#ef4444",
-              color: "#fff", display: "flex",
-              alignItems: "center", justifyContent: "center",
-              boxShadow: "0 0 0 4px #ef444433",
-              opacity: ending ? 0.7 : 1,
-            }}
-            title="End call"
-          >
+          <button onClick={handleEndCall} disabled={ending} style={{
+            width: 64, height: 64, borderRadius: "50%",
+            border: "none", cursor: ending ? "not-allowed" : "pointer",
+            fontSize: 24, background: ending ? "#7f1d1d" : "#ef4444",
+            color: "#fff", display: "flex",
+            alignItems: "center", justifyContent: "center",
+            boxShadow: "0 0 0 4px #ef444433",
+            opacity: ending ? 0.7 : 1,
+          }} title="End call">
             📵
           </button>
 
-          {/* Camera */}
-          <button
-            onClick={toggleCamera}
-            style={{
-              width: 52, height: 52, borderRadius: "50%",
-              border: "none", cursor: "pointer", fontSize: 20,
-              background: cameraOff ? "#ef4444" : "#2a2a2a",
-              color: "#fff", display: "flex",
-              alignItems: "center", justifyContent: "center",
-              transition: "background 0.2s",
-            }}
-            title={cameraOff ? "Turn camera on" : "Turn camera off"}
-          >
+          <button onClick={toggleCamera} style={{
+            width: 52, height: 52, borderRadius: "50%",
+            border: "none", cursor: "pointer", fontSize: 20,
+            background: cameraOff ? "#ef4444" : "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "background 0.2s",
+          }} title={cameraOff ? "Turn camera on" : "Turn camera off"}>
             {cameraOff ? "🚫" : "🎥"}
           </button>
 
-          {/* Volume Down */}
-          <button
-            onClick={decreaseVolume}
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: "50%",
-              border: "none",
-              cursor: "pointer",
-              fontSize: 20,
-              background: "#2a2a2a",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            🔉
-          </button>
+          <button onClick={decreaseVolume} style={{
+            width: 52, height: 52, borderRadius: "50%",
+            border: "none", cursor: "pointer", fontSize: 20,
+            background: "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>🔉</button>
 
-          {/* Volume Up */}
-          <button
-            onClick={increaseVolume}
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: "50%",
-              border: "none",
-              cursor: "pointer",
-              fontSize: 20,
-              background: "#2a2a2a",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            🔊
-          </button>
+          <button onClick={increaseVolume} style={{
+            width: 52, height: 52, borderRadius: "50%",
+            border: "none", cursor: "pointer", fontSize: 20,
+            background: "#2a2a2a", color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>🔊</button>
         </div>
 
         <p style={{ color: "#333", fontSize: 11, marginTop: 16 }}>
