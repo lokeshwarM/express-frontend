@@ -195,24 +195,18 @@ export default function Home() {
           Sign in to continue
         </p>
 
-        {/* Google button */}
         <div id="google-login-btn" style={{ marginBottom: 20 }} />
 
-        {/* Divider */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
           <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
           <span style={{ color: "#444", fontSize: 12 }}>or sign in with</span>
           <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
         </div>
 
-        {/* Mode toggle */}
         <div style={{
-          display: "flex",
-          background: "#1a1a1a",
-          borderRadius: 10,
-          padding: 4,
-          border: "1px solid #2a2a2a",
-          marginBottom: 20,
+          display: "flex", background: "#1a1a1a",
+          borderRadius: 10, padding: 4,
+          border: "1px solid #2a2a2a", marginBottom: 20,
         }}>
           {(["password", "otp"] as LoginMode[]).map((m) => (
             <button
@@ -231,7 +225,6 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Email — both modes */}
         <input
           suppressHydrationWarning
           placeholder="Email address"
@@ -241,7 +234,6 @@ export default function Home() {
           style={{ ...inputStyle, marginBottom: 12 }}
         />
 
-        {/* PASSWORD MODE */}
         {mode === "password" && (
           <>
             <input
@@ -253,11 +245,7 @@ export default function Home() {
               onKeyDown={(e) => e.key === "Enter" && handlePasswordLogin()}
               style={inputStyle}
             />
-
-            {error && (
-              <p style={{ color: "#ef4444", fontSize: 13, marginTop: 10 }}>{error}</p>
-            )}
-
+            {error && <p style={{ color: "#ef4444", fontSize: 13, marginTop: 10 }}>{error}</p>}
             <button
               onClick={handlePasswordLogin}
               disabled={loading || !email || !password}
@@ -275,14 +263,11 @@ export default function Home() {
           </>
         )}
 
-        {/* OTP MODE */}
         {mode === "otp" && (
           <>
             {!otpSent ? (
               <>
-                {error && (
-                  <p style={{ color: "#ef4444", fontSize: 13, marginTop: 4 }}>{error}</p>
-                )}
+                {error && <p style={{ color: "#ef4444", fontSize: 13, marginTop: 4 }}>{error}</p>}
                 <button
                   onClick={handleSendLoginOtp}
                   disabled={loading || !email}
@@ -303,7 +288,6 @@ export default function Home() {
                 <p style={{ color: "#888", fontSize: 13, margin: "0 0 16px" }}>
                   OTP sent to <span style={{ color: "#fff" }}>{email}</span>
                 </p>
-
                 <div
                   style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 16 }}
                   onPaste={handleOtpPaste}
@@ -318,8 +302,7 @@ export default function Home() {
                       maxLength={1}
                       inputMode="numeric"
                       style={{
-                        width: 48, height: 58,
-                        background: "#1a1a1a",
+                        width: 48, height: 58, background: "#1a1a1a",
                         border: `1px solid ${digit ? "#fff" : "#2a2a2a"}`,
                         borderRadius: 10, color: "#fff",
                         fontSize: 22, fontWeight: 700,
@@ -328,13 +311,11 @@ export default function Home() {
                     />
                   ))}
                 </div>
-
                 {error && (
                   <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
                     {error}
                   </p>
                 )}
-
                 <button
                   onClick={handleOtpLogin}
                   disabled={loading || otp.join("").length !== 6}
@@ -349,12 +330,9 @@ export default function Home() {
                 >
                   {loading ? "Verifying..." : "Verify & Sign In"}
                 </button>
-
                 <div style={{ marginTop: 12, textAlign: "center" }}>
                   {countdown > 0 ? (
-                    <p style={{ color: "#444", fontSize: 13 }}>
-                      Resend in {countdown}s
-                    </p>
+                    <p style={{ color: "#444", fontSize: 13 }}>Resend in {countdown}s</p>
                   ) : (
                     <button
                       onClick={handleSendLoginOtp}

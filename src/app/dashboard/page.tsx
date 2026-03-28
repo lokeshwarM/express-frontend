@@ -5,11 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/services/api";
 import AuthGuard from "@/components/AuthGuard";
 
-declare global {
-  interface Window {
-    Razorpay: new (options: object) => { open(): void };
-  }
-}
+// ✅ Removed local declare global — Window types now live in src/types/global.d.ts
 
 type User = { id: string; email: string; role: string };
 type ActiveSession = { id: string; type: string; status: string } | null;
@@ -39,7 +35,6 @@ export default function Dashboard() {
         if (u.role === "LISTENER") { router.push("/listener-dashboard"); return; }
         setUser(u);
         api.getBalance().then(setBalance);
-        // ✅ Feature 4 — check for active session (recovery)
         api.getActiveSession().then(setActiveSession).catch(() => {});
       })
       .catch(() => router.push("/"));
@@ -53,7 +48,6 @@ export default function Dashboard() {
 
     try {
       const order = await api.createPaymentOrder(amt);
-
       const options = {
         key: order.keyId,
         amount: order.amount,
@@ -63,7 +57,6 @@ export default function Dashboard() {
         order_id: order.orderId,
         prefill: { email: user?.email || "" },
         theme: { color: "#22c55e" },
-
         handler: async (response: {
           razorpay_order_id: string;
           razorpay_payment_id: string;
@@ -84,13 +77,10 @@ export default function Dashboard() {
             setPaying(false);
           }
         },
-
         modal: { ondismiss: () => setPaying(false) },
       };
-
       const rzp = new window.Razorpay(options);
       rzp.open();
-
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to initiate payment");
       setPaying(false);
@@ -112,32 +102,21 @@ export default function Dashboard() {
   return (
     <AuthGuard>
       <div style={{
-        minHeight: "100vh",
-        background: "#0f0f0f",
-        color: "#fff",
-        fontFamily: "'DM Sans', sans-serif",
-        padding: "40px 24px",
+        minHeight: "100vh", background: "#0f0f0f",
+        color: "#fff", fontFamily: "'DM Sans', sans-serif", padding: "40px 24px",
       }}>
         <div style={{ maxWidth: 420, margin: "0 auto" }}>
 
           <div style={{ marginBottom: 40 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>
-              Express
-            </h1>
+            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
             {user && <p style={{ color: "#666", margin: "6px 0 0", fontSize: 14 }}>{user.email}</p>}
           </div>
 
-          {/* ✅ Feature 4 — Active session recovery banner */}
           {activeSession && (
             <div style={{
-              background: "#22c55e18",
-              border: "1px solid #22c55e44",
-              borderRadius: 12,
-              padding: "16px",
-              marginBottom: 20,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              background: "#22c55e18", border: "1px solid #22c55e44",
+              borderRadius: 12, padding: "16px", marginBottom: 20,
+              display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
               <div>
                 <p style={{ margin: 0, fontWeight: 600, color: "#22c55e", fontSize: 14 }}>
@@ -150,14 +129,8 @@ export default function Dashboard() {
               <button
                 onClick={() => router.push(`/call?sessionId=${activeSession.id}`)}
                 style={{
-                  padding: "8px 16px",
-                  background: "#22c55e",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 8,
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: "pointer",
+                  padding: "8px 16px", background: "#22c55e", color: "#fff",
+                  border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: "pointer",
                 }}
               >
                 Rejoin
@@ -200,8 +173,7 @@ export default function Dashboard() {
                   borderRadius: 10, padding: "10px 20px",
                   fontWeight: 600, fontSize: 14,
                   cursor: paying || !amount ? "not-allowed" : "pointer",
-                  opacity: !amount ? 0.5 : 1,
-                  whiteSpace: "nowrap",
+                  opacity: !amount ? 0.5 : 1, whiteSpace: "nowrap",
                 }}
               >
                 {paying ? "Opening..." : "Add Money"}
@@ -210,18 +182,13 @@ export default function Dashboard() {
 
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               {[100, 250, 500, 1000].map((a) => (
-                <button
-                  key={a}
-                  onClick={() => setAmount(String(a))}
-                  style={{
-                    flex: 1, padding: "6px 0",
-                    background: amount === String(a) ? "#22c55e22" : "#111",
-                    border: `1px solid ${amount === String(a) ? "#22c55e" : "#2a2a2a"}`,
-                    borderRadius: 8,
-                    color: amount === String(a) ? "#22c55e" : "#555",
-                    fontSize: 12, cursor: "pointer", fontWeight: 600,
-                  }}
-                >
+                <button key={a} onClick={() => setAmount(String(a))} style={{
+                  flex: 1, padding: "6px 0",
+                  background: amount === String(a) ? "#22c55e22" : "#111",
+                  border: `1px solid ${amount === String(a) ? "#22c55e" : "#2a2a2a"}`,
+                  borderRadius: 8, color: amount === String(a) ? "#22c55e" : "#555",
+                  fontSize: 12, cursor: "pointer", fontWeight: 600,
+                }}>
                   ₹{a}
                 </button>
               ))}
@@ -236,23 +203,14 @@ export default function Dashboard() {
             <p style={{ color: "#666", fontSize: 13, margin: "0 0 16px", textTransform: "uppercase", letterSpacing: 1 }}>
               Start a Call
             </p>
-
-            <div style={{
-              display: "flex", background: "#111",
-              borderRadius: 10, padding: 4, marginBottom: 20,
-            }}>
+            <div style={{ display: "flex", background: "#111", borderRadius: 10, padding: 4, marginBottom: 20 }}>
               {(["VOICE", "VIDEO"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setCallType(t)}
-                  style={{
-                    flex: 1, padding: "10px", borderRadius: 8, border: "none",
-                    cursor: "pointer", fontWeight: 600, fontSize: 14,
-                    background: callType === t ? "#fff" : "transparent",
-                    color: callType === t ? "#000" : "#555",
-                    transition: "all 0.15s",
-                  }}
-                >
+                <button key={t} onClick={() => setCallType(t)} style={{
+                  flex: 1, padding: "10px", borderRadius: 8, border: "none",
+                  cursor: "pointer", fontWeight: 600, fontSize: 14,
+                  background: callType === t ? "#fff" : "transparent",
+                  color: callType === t ? "#000" : "#555", transition: "all 0.15s",
+                }}>
                   {t === "VOICE" ? "🎙 Voice" : "🎥 Video"}
                   <span style={{ display: "block", fontSize: 11, fontWeight: 400, marginTop: 2, color: "#444" }}>
                     ₹{t === "VOICE" ? "2.5" : "3.0"}/min
@@ -260,7 +218,6 @@ export default function Dashboard() {
                 </button>
               ))}
             </div>
-
             <button
               onClick={() => startCall(callType)}
               disabled={calling}
@@ -286,21 +243,17 @@ export default function Dashboard() {
                 </>
               ) : `${callType === "VOICE" ? "🎙" : "🎥"} Start ${callType === "VOICE" ? "Voice" : "Video"} Call`}
             </button>
-
             {error && (
-              <p style={{ color: "#ef4444", fontSize: 13, marginTop: 12, textAlign: "center" }}>
-                {error}
-              </p>
+              <p style={{ color: "#ef4444", fontSize: 13, marginTop: 12, textAlign: "center" }}>{error}</p>
             )}
           </div>
 
           <button
             onClick={() => router.push("/history")}
             style={{
-              width: "100%", padding: "12px",
-              background: "transparent", border: "1px solid #2a2a2a",
-              borderRadius: 12, color: "#555", fontSize: 14,
-              cursor: "pointer", marginBottom: 24,
+              width: "100%", padding: "12px", background: "transparent",
+              border: "1px solid #2a2a2a", borderRadius: 12,
+              color: "#555", fontSize: 14, cursor: "pointer", marginBottom: 24,
             }}
           >
             📋 Call &amp; transaction history
@@ -313,7 +266,6 @@ export default function Dashboard() {
             Logout
           </button>
         </div>
-
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     </AuthGuard>
