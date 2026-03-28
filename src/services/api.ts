@@ -1,4 +1,6 @@
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+const BASE = typeof window !== "undefined" && window.location.protocol === "https:"
+  ? "/api"
+  : (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080");
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
