@@ -36,8 +36,12 @@ export default function ListenerDashboard() {
   }, []);
 
   const connectSocket = (userId: string) => {
-    const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
-    const socket = new SockJS(`${BASE}/ws`);
+    const WS_BASE = typeof window !== "undefined" && window.location.protocol === "https:"
+      ? window.location.origin
+      : (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080");
+
+    const wsPath = window.location.protocol === "https:" ? "/ws" : "/ws";
+    const socket = new SockJS(`${WS_BASE}${wsPath}`);
 
     const client = new Client({
       webSocketFactory: () => socket,
