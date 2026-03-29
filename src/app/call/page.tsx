@@ -17,6 +17,9 @@ export default function CallPage() {
   const params = useSearchParams();
   const router = useRouter();
   const sessionId = params.get("sessionId") as string;
+  // ✅ Read session type from URL — dashboard passes ?sessionId=xxx&type=VOICE or VIDEO
+  const sessionType = (params.get("type") || "VIDEO") as "VOICE" | "VIDEO";
+  const isVoice = sessionType === "VOICE";
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -29,7 +32,8 @@ export default function CallPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [muted, setMuted] = useState(false);
-  const [cameraOff, setCameraOff] = useState(false);
+  // ✅ For voice calls camera starts off and stays off
+  const [cameraOff, setCameraOff] = useState(isVoice);
   const [seconds, setSeconds] = useState(0);
   const [connected, setConnected] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -68,9 +72,6 @@ export default function CallPage() {
     setCameraOff((c) => !c);
   };
 
-  const increaseVolume = () => setVolume((v) => Math.min(1, parseFloat((v + 0.2).toFixed(1))));
-  const decreaseVolume = () => setVolume((v) => Math.max(0, parseFloat((v - 0.2).toFixed(1))));
-
   const cleanup = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -82,8 +83,6 @@ export default function CallPage() {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
 
-  // ✅ FIX: Remote end means the LISTENER already called endSession.
-  // User side must NOT call endSession again — just clean up and redirect.
   const handleRemoteEnd = () => {
     if (endedRef.current) return;
     endedRef.current = true;
@@ -97,16 +96,13 @@ export default function CallPage() {
       : (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080");
 
     const socket = new SockJS(`${WS_BASE}/ws`);
-
     const client = new Client({
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
       onConnect: async () => {
-
         client.subscribe("/topic/signal", async (msg) => {
           const data: SignalMessage = JSON.parse(msg.body);
           if (data.sessionId !== sessionId) return;
-
           const peer = pcRef.current;
           if (!peer) return;
 
@@ -138,12 +134,10 @@ export default function CallPage() {
             }
           }
 
-          // ✅ FIX: listener ended the call — just redirect, don't call endSession
           if (data.type === "end") handleRemoteEnd();
           if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
         });
 
-        // Subscribe to session-specific topic for backend-triggered session_ended
         client.subscribe(`/topic/session/${sessionId}`, (msg) => {
           const data = JSON.parse(msg.body);
           if (data.type === "session_ended") handleRemoteEnd();
@@ -164,7 +158,12 @@ export default function CallPage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    // ✅ Voice call: audio only. Video call: audio + video.
+    const constraints = isVoice
+      ? { audio: true, video: false }
+      : { audio: true, video: true };
+
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     streamRef.current = stream;
 
     if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -201,13 +200,11 @@ export default function CallPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ User clicks End — user is the one who calls endSession (single source of truth)
   const handleEndCall = async () => {
     if (endedRef.current) return;
     endedRef.current = true;
     setEnding(true);
 
-    // Notify listener via WebSocket to clean up their side
     if (stompRef.current?.connected) {
       stompRef.current.publish({
         destination: "/app/signal",
@@ -215,7 +212,6 @@ export default function CallPage() {
       });
     }
 
-    // Only user side calls endSession — billing happens once
     try {
       const result = await api.endSession(sessionId);
       if (result && !result.success) {
@@ -241,14 +237,15 @@ export default function CallPage() {
         fontFamily: "'DM Sans', sans-serif",
         padding: 24,
       }}>
+
         {/* Timer + status */}
         <div style={{ marginBottom: 20, textAlign: "center" }}>
+          <div style={{ fontSize: 14, color: "#555", marginBottom: 4 }}>
+            {isVoice ? "🎙 Voice Call" : "🎥 Video Call"}
+          </div>
           <div style={{
-            fontSize: 36,
-            fontWeight: 700,
-            color: "#fff",
-            letterSpacing: 2,
-            fontVariantNumeric: "tabular-nums",
+            fontSize: 36, fontWeight: 700, color: "#fff",
+            letterSpacing: 2, fontVariantNumeric: "tabular-nums",
           }}>
             {formatTime(seconds)}
           </div>
@@ -257,57 +254,64 @@ export default function CallPage() {
           </div>
         </div>
 
-        {/* Videos */}
-        <div style={{ position: "relative", marginBottom: 24 }}>
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            style={{
-              width: "min(480px, 90vw)",
-              aspectRatio: "4/3",
-              borderRadius: 16,
-              background: "#1a1a1a",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
-          <div style={{
-            position: "absolute",
-            bottom: 12, right: 12,
-            width: 100,
-            borderRadius: 10,
-            overflow: "hidden",
-            border: "2px solid #333",
-            background: "#111",
-          }}>
+        {/* ✅ Video section — only shown for VIDEO calls */}
+        {!isVoice && (
+          <div style={{ position: "relative", marginBottom: 24 }}>
             <video
-              ref={localVideoRef}
+              ref={remoteVideoRef}
               autoPlay
               playsInline
-              muted
               style={{
-                width: "100%",
+                width: "min(480px, 90vw)",
                 aspectRatio: "4/3",
+                borderRadius: 16,
+                background: "#1a1a1a",
                 objectFit: "cover",
                 display: "block",
-                opacity: cameraOff ? 0.2 : 1,
               }}
             />
-            {cameraOff && (
-              <div style={{
-                position: "absolute", inset: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "#fff", fontSize: 20,
-              }}>
-                🚫
-              </div>
-            )}
+            <div style={{
+              position: "absolute", bottom: 12, right: 12,
+              width: 100, borderRadius: 10, overflow: "hidden",
+              border: "2px solid #333", background: "#111",
+            }}>
+              <video
+                ref={localVideoRef}
+                autoPlay playsInline muted
+                style={{
+                  width: "100%", aspectRatio: "4/3",
+                  objectFit: "cover", display: "block",
+                  opacity: cameraOff ? 0.2 : 1,
+                }}
+              />
+              {cameraOff && (
+                <div style={{
+                  position: "absolute", inset: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: "#fff", fontSize: 20,
+                }}>🚫</div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* ✅ Voice call — avatar placeholder instead of video */}
+        {isVoice && (
+          <div style={{
+            width: 120, height: 120, borderRadius: "50%",
+            background: connected ? "#22c55e22" : "#1a1a1a",
+            border: `2px solid ${connected ? "#22c55e" : "#2a2a2a"}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 48, marginBottom: 32,
+            transition: "all 0.3s",
+          }}>
+            🎙
+          </div>
+        )}
 
         {/* Controls */}
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 20 }}>
+          {/* Mute */}
           <button onClick={toggleMute} style={{
             width: 52, height: 52, borderRadius: "50%",
             border: "none", cursor: "pointer", fontSize: 20,
@@ -318,6 +322,7 @@ export default function CallPage() {
             {muted ? "🔇" : "🎙"}
           </button>
 
+          {/* End call */}
           <button onClick={handleEndCall} disabled={ending} style={{
             width: 64, height: 64, borderRadius: "50%",
             border: "none", cursor: ending ? "not-allowed" : "pointer",
@@ -330,29 +335,43 @@ export default function CallPage() {
             📵
           </button>
 
-          <button onClick={toggleCamera} style={{
-            width: 52, height: 52, borderRadius: "50%",
-            border: "none", cursor: "pointer", fontSize: 20,
-            background: cameraOff ? "#ef4444" : "#2a2a2a", color: "#fff",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            transition: "background 0.2s",
-          }} title={cameraOff ? "Turn camera on" : "Turn camera off"}>
-            {cameraOff ? "🚫" : "🎥"}
-          </button>
+          {/* ✅ Camera toggle — only for VIDEO calls */}
+          {!isVoice && (
+            <button onClick={toggleCamera} style={{
+              width: 52, height: 52, borderRadius: "50%",
+              border: "none", cursor: "pointer", fontSize: 20,
+              background: cameraOff ? "#ef4444" : "#2a2a2a", color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "background 0.2s",
+            }} title={cameraOff ? "Turn camera on" : "Turn camera off"}>
+              {cameraOff ? "🚫" : "🎥"}
+            </button>
+          )}
+        </div>
 
-          <button onClick={decreaseVolume} style={{
-            width: 52, height: 52, borderRadius: "50%",
-            border: "none", cursor: "pointer", fontSize: 20,
-            background: "#2a2a2a", color: "#fff",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>🔉</button>
-
-          <button onClick={increaseVolume} style={{
-            width: 52, height: 52, borderRadius: "50%",
-            border: "none", cursor: "pointer", fontSize: 20,
-            background: "#2a2a2a", color: "#fff",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>🔊</button>
+        {/* ✅ YouTube-style volume slider */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          background: "#1a1a1a", borderRadius: 20,
+          padding: "8px 16px", border: "1px solid #2a2a2a",
+        }}>
+          <span style={{ fontSize: 16 }}>{volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            style={{
+              width: 100,
+              accentColor: "#22c55e",
+              cursor: "pointer",
+            }}
+          />
+          <span style={{ fontSize: 12, color: "#555", minWidth: 30 }}>
+            {Math.round(volume * 100)}%
+          </span>
         </div>
 
         <p style={{ color: "#333", fontSize: 11, marginTop: 16 }}>

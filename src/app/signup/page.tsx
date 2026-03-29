@@ -29,6 +29,18 @@ export default function SignupPage() {
     return () => clearTimeout(t);
   }, [countdown]);
 
+  //  Re-initialize Google GSI whenever role changes so callback captures latest role
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.google) return;
+    window.google.accounts.id.initialize({
+      client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      callback: handleGoogleCallback,
+    });
+    if (step === "email") renderGoogleBtn();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
+
+
   useEffect(() => {
     const script = document.createElement("script");
     script.src = "https://accounts.google.com/gsi/client";
@@ -71,6 +83,7 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
     try {
+      // ✅ role state is correctly captured here
       const data = await api.googleAuth(response.credential, role);
       localStorage.setItem("token", data.token);
       router.push(data.role === "LISTENER" ? "/listener-dashboard" : "/dashboard");

@@ -92,7 +92,8 @@ export default function Dashboard() {
     setCalling(true);
     try {
       const session = await api.initiateCall(type);
-      router.push(`/call?sessionId=${session.id}`);
+      // ✅ Pass session type in URL so call page knows voice vs video
+      router.push(`/call?sessionId=${session.id}&type=${type}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not start call");
       setCalling(false);

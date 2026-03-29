@@ -64,8 +64,10 @@ export default function ListenerDashboard() {
   const acceptCall = () => {
     if (!incomingCall) return;
     const sessionId = incomingCall.sessionId;
+    const type = incomingCall.callType; // "VOICE" or "VIDEO"
     setIncomingCall(null);
-    router.push(`/listener?sessionId=${sessionId}`);
+    // ✅ Pass session type so listener call page knows voice vs video
+    router.push(`/listener?sessionId=${sessionId}&type=${type}`);
   };
 
   const rejectCall = () => {
