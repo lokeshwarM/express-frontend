@@ -13,11 +13,19 @@ type SignalMessage = {
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
+const FLAG_REASONS = [
+  "Inappropriate language",
+  "Harassment or abuse",
+  "Shared personal information",
+  "Unprofessional behavior",
+  "Fake or misleading identity",
+  "Other",
+];
+
 export default function CallPage() {
   const params = useSearchParams();
   const router = useRouter();
   const sessionId = params.get("sessionId") as string;
-  // ✅ Read session type from URL — dashboard passes ?sessionId=xxx&type=VOICE or VIDEO
   const sessionType = (params.get("type") || "VIDEO") as "VOICE" | "VIDEO";
   const isVoice = sessionType === "VOICE";
 
@@ -32,12 +40,25 @@ export default function CallPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [muted, setMuted] = useState(false);
-  // ✅ For voice calls camera starts off and stays off
   const [cameraOff, setCameraOff] = useState(isVoice);
   const [seconds, setSeconds] = useState(0);
   const [connected, setConnected] = useState(false);
   const [ending, setEnding] = useState(false);
   const [volume, setVolume] = useState(1);
+
+  // Flag modal state
+  const [showFlagModal, setShowFlagModal] = useState(false);
+  const [flagReason, setFlagReason] = useState("");
+  const [flagging, setFlagging] = useState(false);
+  const [flagDone, setFlagDone] = useState(false);
+
+  // Rating modal state — shown AFTER call ends
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [endedSessionId, setEndedSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (connected) {
@@ -47,9 +68,7 @@ export default function CallPage() {
   }, [connected]);
 
   useEffect(() => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.volume = volume;
-    }
+    if (remoteVideoRef.current) remoteVideoRef.current.volume = volume;
   }, [volume]);
 
   const formatTime = (s: number) => {
@@ -83,6 +102,7 @@ export default function CallPage() {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
 
+  // Remote end — listener ended, just redirect (no rating modal since user didn't end)
   const handleRemoteEnd = () => {
     if (endedRef.current) return;
     endedRef.current = true;
@@ -114,7 +134,6 @@ export default function CallPage() {
               body: JSON.stringify({ type: "offer", sessionId, payload: offer }),
             });
           }
-
           if (data.type === "answer") {
             if (peer.signalingState !== "have-local-offer") return;
             await peer.setRemoteDescription(
@@ -125,7 +144,6 @@ export default function CallPage() {
             }
             pendingCandidatesRef.current = [];
           }
-
           if (data.type === "candidate") {
             if (peer.remoteDescription) {
               try { await peer.addIceCandidate(data.payload as RTCIceCandidateInit); } catch {}
@@ -133,7 +151,6 @@ export default function CallPage() {
               pendingCandidatesRef.current.push(data.payload as RTCIceCandidateInit);
             }
           }
-
           if (data.type === "end") handleRemoteEnd();
           if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
         });
@@ -149,7 +166,6 @@ export default function CallPage() {
         });
       },
     });
-
     client.activate();
     stompRef.current = client;
   };
@@ -157,31 +173,20 @@ export default function CallPage() {
   const startCall = async () => {
     if (startedRef.current) return;
     startedRef.current = true;
-
-    // ✅ Voice call: audio only. Video call: audio + video.
-    const constraints = isVoice
-      ? { audio: true, video: false }
-      : { audio: true, video: true };
-
+    const constraints = isVoice ? { audio: true, video: false } : { audio: true, video: true };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     streamRef.current = stream;
-
     if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     pcRef.current = pc;
-
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
     pc.ontrack = (event) => {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
         setConnected(true);
       }
     };
-
     pc.onicecandidate = (event) => {
       if (event.candidate && stompRef.current?.connected) {
         stompRef.current.publish({
@@ -190,7 +195,6 @@ export default function CallPage() {
         });
       }
     };
-
     connectWebSocket(pc);
   };
 
@@ -200,6 +204,7 @@ export default function CallPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ User ends call — show rating modal after
   const handleEndCall = async () => {
     if (endedRef.current) return;
     endedRef.current = true;
@@ -221,22 +226,214 @@ export default function CallPage() {
       console.error("End session error:", e);
     } finally {
       cleanup();
+      // ✅ Show rating modal instead of immediately navigating
+      setEndedSessionId(sessionId);
+      setEnding(false);
+      setShowRatingModal(true);
+    }
+  };
+
+  // ✅ Submit flag during call
+  const handleSubmitFlag = async () => {
+    if (!flagReason) return;
+    setFlagging(true);
+    try {
+      await api.flagListener(sessionId, flagReason);
+      setFlagDone(true);
+      setTimeout(() => {
+        setShowFlagModal(false);
+        setFlagDone(false);
+        setFlagReason("");
+      }, 2000);
+    } catch (e) {
+      console.error("Flag error:", e);
+    } finally {
+      setFlagging(false);
+    }
+  };
+
+  // ✅ Submit review after call
+  const handleSubmitReview = async () => {
+    if (!endedSessionId || rating === 0) return;
+    setSubmittingReview(true);
+    try {
+      await api.submitReview(endedSessionId, rating, reviewComment);
+    } catch (e) {
+      console.error("Review error:", e);
+    } finally {
+      setSubmittingReview(false);
       router.push("/dashboard");
     }
+  };
+
+  const handleSkipReview = () => {
+    router.push("/dashboard");
   };
 
   return (
     <AuthGuard>
       <div style={{
-        minHeight: "100vh",
-        background: "#0a0a0a",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "'DM Sans', sans-serif",
-        padding: 24,
+        minHeight: "100vh", background: "#0a0a0a",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        fontFamily: "'DM Sans', sans-serif", padding: 24,
       }}>
+
+        {/* ✅ Flag Modal */}
+        {showFlagModal && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+          }}>
+            <div style={{
+              background: "#1a1a1a", borderRadius: 20, padding: "32px 28px",
+              width: "min(380px, 90vw)", border: "1px solid #2a2a2a",
+            }}>
+              {flagDone ? (
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+                  <p style={{ color: "#22c55e", fontWeight: 700, fontSize: 18, margin: 0 }}>
+                    Report submitted
+                  </p>
+                  <p style={{ color: "#555", fontSize: 13, marginTop: 8 }}>
+                    Thank you. Our team will review this.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>🚩 Report Listener</h3>
+                    <button
+                      onClick={() => { setShowFlagModal(false); setFlagReason(""); }}
+                      style={{ background: "none", border: "none", color: "#555", fontSize: 20, cursor: "pointer" }}
+                    >✕</button>
+                  </div>
+                  <p style={{ color: "#666", fontSize: 13, marginBottom: 16 }}>
+                    Select a reason for reporting:
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                    {FLAG_REASONS.map((reason) => (
+                      <button
+                        key={reason}
+                        onClick={() => setFlagReason(reason)}
+                        style={{
+                          padding: "12px 16px", borderRadius: 10, textAlign: "left",
+                          background: flagReason === reason ? "#ef444420" : "#111",
+                          border: `1px solid ${flagReason === reason ? "#ef4444" : "#2a2a2a"}`,
+                          color: flagReason === reason ? "#ef4444" : "#888",
+                          fontSize: 14, cursor: "pointer", fontWeight: flagReason === reason ? 600 : 400,
+                        }}
+                      >
+                        {reason}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleSubmitFlag}
+                    disabled={!flagReason || flagging}
+                    style={{
+                      width: "100%", padding: "14px",
+                      background: flagReason && !flagging ? "#ef4444" : "#1a1a1a",
+                      color: flagReason && !flagging ? "#fff" : "#555",
+                      border: "none", borderRadius: 10,
+                      fontSize: 15, fontWeight: 700,
+                      cursor: flagReason && !flagging ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    {flagging ? "Submitting..." : "Submit Report"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ✅ Rating Modal — shown after call ends */}
+        {showRatingModal && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+          }}>
+            <div style={{
+              background: "#1a1a1a", borderRadius: 24, padding: "40px 32px",
+              width: "min(380px, 90vw)", border: "1px solid #2a2a2a", textAlign: "center",
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎧</div>
+              <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px" }}>
+                How was your session?
+              </h2>
+              <p style={{ color: "#555", fontSize: 14, margin: "0 0 28px" }}>
+                Rate your experience with the listener
+              </p>
+
+              {/* Star rating */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24 }}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <span
+                    key={star}
+                    onMouseEnter={() => setHoverRating(star)}
+                    onMouseLeave={() => setHoverRating(0)}
+                    onClick={() => setRating(star)}
+                    style={{
+                      fontSize: 40, cursor: "pointer",
+                      color: (hoverRating || rating) >= star ? "#f59e0b" : "#2a2a2a",
+                      transition: "color 0.1s",
+                    }}
+                  >★</span>
+                ))}
+              </div>
+
+              {rating > 0 && (
+                <p style={{ color: "#f59e0b", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>
+                  {["", "Poor", "Fair", "Good", "Very Good", "Excellent"][rating]}
+                </p>
+              )}
+
+              {/* Optional comment */}
+              <textarea
+                placeholder="Leave a comment (optional)"
+                value={reviewComment}
+                onChange={(e) => setReviewComment(e.target.value)}
+                rows={3}
+                style={{
+                  width: "100%", background: "#111",
+                  border: "1px solid #2a2a2a", borderRadius: 10,
+                  padding: "12px 14px", color: "#fff",
+                  fontSize: 14, outline: "none", resize: "none",
+                  boxSizing: "border-box", marginBottom: 16,
+                }}
+              />
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  onClick={handleSkipReview}
+                  style={{
+                    flex: 1, padding: "14px",
+                    background: "transparent", color: "#555",
+                    border: "1px solid #2a2a2a", borderRadius: 12,
+                    fontSize: 14, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={handleSubmitReview}
+                  disabled={rating === 0 || submittingReview}
+                  style={{
+                    flex: 2, padding: "14px",
+                    background: rating > 0 && !submittingReview ? "#22c55e" : "#1a1a1a",
+                    color: rating > 0 && !submittingReview ? "#fff" : "#555",
+                    border: "none", borderRadius: 12,
+                    fontSize: 14, fontWeight: 700,
+                    cursor: rating > 0 && !submittingReview ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {submittingReview ? "Submitting..." : "Submit Rating"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Timer + status */}
         <div style={{ marginBottom: 20, textAlign: "center" }}>
@@ -254,64 +451,44 @@ export default function CallPage() {
           </div>
         </div>
 
-        {/* ✅ Video section — only shown for VIDEO calls */}
+        {/* Video — only for VIDEO */}
         {!isVoice && (
           <div style={{ position: "relative", marginBottom: 24 }}>
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              style={{
-                width: "min(480px, 90vw)",
-                aspectRatio: "4/3",
-                borderRadius: 16,
-                background: "#1a1a1a",
-                objectFit: "cover",
-                display: "block",
-              }}
-            />
+            <video ref={remoteVideoRef} autoPlay playsInline style={{
+              width: "min(480px, 90vw)", aspectRatio: "4/3",
+              borderRadius: 16, background: "#1a1a1a", objectFit: "cover", display: "block",
+            }} />
             <div style={{
-              position: "absolute", bottom: 12, right: 12,
-              width: 100, borderRadius: 10, overflow: "hidden",
-              border: "2px solid #333", background: "#111",
+              position: "absolute", bottom: 12, right: 12, width: 100,
+              borderRadius: 10, overflow: "hidden", border: "2px solid #333", background: "#111",
             }}>
-              <video
-                ref={localVideoRef}
-                autoPlay playsInline muted
-                style={{
-                  width: "100%", aspectRatio: "4/3",
-                  objectFit: "cover", display: "block",
-                  opacity: cameraOff ? 0.2 : 1,
-                }}
-              />
+              <video ref={localVideoRef} autoPlay playsInline muted style={{
+                width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block",
+                opacity: cameraOff ? 0.2 : 1,
+              }} />
               {cameraOff && (
                 <div style={{
-                  position: "absolute", inset: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "#fff", fontSize: 20,
+                  position: "absolute", inset: 0, display: "flex",
+                  alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 20,
                 }}>🚫</div>
               )}
             </div>
           </div>
         )}
 
-        {/* ✅ Voice call — avatar placeholder instead of video */}
+        {/* Voice avatar */}
         {isVoice && (
           <div style={{
             width: 120, height: 120, borderRadius: "50%",
             background: connected ? "#22c55e22" : "#1a1a1a",
             border: `2px solid ${connected ? "#22c55e" : "#2a2a2a"}`,
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 48, marginBottom: 32,
-            transition: "all 0.3s",
-          }}>
-            🎙
-          </div>
+            fontSize: 48, marginBottom: 32, transition: "all 0.3s",
+          }}>🎙</div>
         )}
 
         {/* Controls */}
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 20 }}>
-          {/* Mute */}
           <button onClick={toggleMute} style={{
             width: 52, height: 52, borderRadius: "50%",
             border: "none", cursor: "pointer", fontSize: 20,
@@ -322,20 +499,14 @@ export default function CallPage() {
             {muted ? "🔇" : "🎙"}
           </button>
 
-          {/* End call */}
           <button onClick={handleEndCall} disabled={ending} style={{
             width: 64, height: 64, borderRadius: "50%",
             border: "none", cursor: ending ? "not-allowed" : "pointer",
             fontSize: 24, background: ending ? "#7f1d1d" : "#ef4444",
-            color: "#fff", display: "flex",
-            alignItems: "center", justifyContent: "center",
-            boxShadow: "0 0 0 4px #ef444433",
-            opacity: ending ? 0.7 : 1,
-          }} title="End call">
-            📵
-          </button>
+            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 0 0 4px #ef444433", opacity: ending ? 0.7 : 1,
+          }} title="End call">📵</button>
 
-          {/* ✅ Camera toggle — only for VIDEO calls */}
           {!isVoice && (
             <button onClick={toggleCamera} style={{
               width: 52, height: 52, borderRadius: "50%",
@@ -347,9 +518,23 @@ export default function CallPage() {
               {cameraOff ? "🚫" : "🎥"}
             </button>
           )}
+
+          {/* ✅ Flag button */}
+          <button
+            onClick={() => setShowFlagModal(true)}
+            style={{
+              width: 52, height: 52, borderRadius: "50%",
+              border: "none", cursor: "pointer", fontSize: 20,
+              background: flagDone ? "#ef444440" : "#2a2a2a", color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            title="Report listener"
+          >
+            🚩
+          </button>
         </div>
 
-        {/* ✅ YouTube-style volume slider */}
+        {/* Volume slider */}
         <div style={{
           display: "flex", alignItems: "center", gap: 10,
           background: "#1a1a1a", borderRadius: 20,
@@ -357,17 +542,9 @@ export default function CallPage() {
         }}>
           <span style={{ fontSize: 16 }}>{volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</span>
           <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={volume}
+            type="range" min={0} max={1} step={0.05} value={volume}
             onChange={(e) => setVolume(parseFloat(e.target.value))}
-            style={{
-              width: 100,
-              accentColor: "#22c55e",
-              cursor: "pointer",
-            }}
+            style={{ width: 100, accentColor: "#22c55e", cursor: "pointer" }}
           />
           <span style={{ fontSize: 12, color: "#555", minWidth: 30 }}>
             {Math.round(volume * 100)}%

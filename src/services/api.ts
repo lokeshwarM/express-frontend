@@ -269,4 +269,45 @@ export const api = {
     if (!data.success) throw new Error(data.message || "Withdrawal failed");
     return data.data as number;
   },
+
+// ✅ Flag a listener during session
+  async flagListener(sessionId: string, reason: string) {
+    const res = await fetch(`${BASE}/flags`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ sessionId, reason, confidenceScore: 1.0 }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to flag");
+  },
+
+  // ✅ Submit review after session
+  async submitReview(sessionId: string, rating: number, comment: string) {
+    const res = await fetch(`${BASE}/listeners/review`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ sessionId, rating, comment }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to submit review");
+  },
+
+  // ✅ Get listener reviews (for listener-reviews page)
+  async getListenerReviews(): Promise<Array<{
+    id: string; rating: number; comment: string;
+    userDisplayId: string; sessionId: string; createdAt: string;
+  }>> {
+    const res = await fetch(`${BASE}/listeners/me/reviews`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  // ✅ Get listener flags with details
+  async getListenerFlags(): Promise<Array<{
+    id: string; reason: string; sessionId: string; createdAt: string;
+  }>> {
+    const res = await fetch(`${BASE}/listeners/me/flags`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
 };
