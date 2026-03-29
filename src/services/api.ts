@@ -16,7 +16,6 @@ function authHeaders(): Record<string, string> {
 
 export const api = {
 
-  // ✅ New signup step 1 — send OTP
   async sendSignupOtp(email: string) {
     const res = await fetch(`${BASE}/auth/send-signup-otp`, {
       method: "POST",
@@ -27,7 +26,6 @@ export const api = {
     if (!data.success) throw new Error(data.message || "Failed to send OTP");
   },
 
-  // ✅ New signup step 2 — complete signup with role
   async completeSignup(payload: {
     email: string;
     otp: string;
@@ -155,7 +153,6 @@ export const api = {
     return data.data as { id: string; listenerId: string; status: string; type: string };
   },
 
-  //  Fixed: returns the response so callers can check success/failure
   async endSession(sessionId: string): Promise<{ success: boolean; message?: string } | null> {
     try {
       const res = await fetch(`${BASE}/sessions/${sessionId}/end`, {
@@ -169,7 +166,6 @@ export const api = {
     }
   },
 
-  //  Fixed: returns null safely if no active session (instead of crashing)
   async getActiveSession(): Promise<{ id: string; type: string; status: string } | null> {
     try {
       const res = await fetch(`${BASE}/sessions/active`, { headers: authHeaders() });
@@ -215,10 +211,22 @@ export const api = {
     return data.data as string;
   },
 
+  // ✅ NEW: Listener withdrawal
+  async withdraw(amount: number): Promise<number> {
+    const res = await fetch(`${BASE}/wallet/me/withdraw`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ amount }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Withdrawal failed");
+    return data.data as number;
+  },
+
   async heartbeat(sessionId: string) {
     await fetch(`${BASE}/sessions/${sessionId}/heartbeat`, {
       method: "POST",
       headers: authHeaders(),
     });
-  }
+  },
 };
