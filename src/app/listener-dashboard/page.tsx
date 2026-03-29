@@ -9,6 +9,22 @@ import AuthGuard from "@/components/AuthGuard";
 
 type User = { id: string; email: string; role: string };
 type IncomingCall = { sessionId: string; callType: string };
+type Stats = { totalSessions: number; flagCount: number; rating: number; isBlacklisted: boolean };
+
+function StarRating({ rating }: { rating: number }) {
+  return (
+    <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <span key={star} style={{
+          fontSize: 16,
+          color: rating >= star ? "#f59e0b" : rating >= star - 0.5 ? "#f59e0b" : "#2a2a2a",
+          opacity: rating >= star - 0.5 ? 1 : 0.4,
+        }}>★</span>
+      ))}
+      <span style={{ fontSize: 13, color: "#888", marginLeft: 4 }}>{rating.toFixed(1)}</span>
+    </div>
+  );
+}
 
 export default function ListenerDashboard() {
   const router = useRouter();
@@ -18,10 +34,7 @@ export default function ListenerDashboard() {
   const [toggling, setToggling] = useState(false);
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [withdrawError, setWithdrawError] = useState<string | null>(null);
-  const [withdrawSuccess, setWithdrawSuccess] = useState<string | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const stompRef = useRef<Client | null>(null);
 
   useEffect(() => {
@@ -32,6 +45,7 @@ export default function ListenerDashboard() {
         const isAvailable = await api.getMyAvailability();
         setAvailable(isAvailable);
         api.getBalance().then(setBalance);
+        api.getListenerStats().then(setStats).catch(() => {});
         connectSocket(u.id);
       })
       .catch(() => router.push("/"));
@@ -63,11 +77,9 @@ export default function ListenerDashboard() {
 
   const acceptCall = () => {
     if (!incomingCall) return;
-    const sessionId = incomingCall.sessionId;
-    const type = incomingCall.callType; // "VOICE" or "VIDEO"
+    const { sessionId, callType } = incomingCall;
     setIncomingCall(null);
-    // ✅ Pass session type so listener call page knows voice vs video
-    router.push(`/listener?sessionId=${sessionId}&type=${type}`);
+    router.push(`/listener?sessionId=${sessionId}&type=${callType}`);
   };
 
   const rejectCall = () => {
@@ -94,24 +106,6 @@ export default function ListenerDashboard() {
     }
   };
 
-  const handleWithdraw = async () => {
-    const amt = Number(withdrawAmount);
-    if (!amt || amt <= 0) return;
-    setWithdrawError(null);
-    setWithdrawSuccess(null);
-    setWithdrawing(true);
-    try {
-      const newBalance = await api.withdraw(amt);
-      setBalance(newBalance);
-      setWithdrawAmount("");
-      setWithdrawSuccess(`₹${amt.toFixed(2)} withdrawal request submitted successfully!`);
-    } catch (e: unknown) {
-      setWithdrawError(e instanceof Error ? e.message : "Withdrawal failed");
-    } finally {
-      setWithdrawing(false);
-    }
-  };
-
   const logout = () => {
     api.setAvailability(false).catch(console.error).finally(() => {
       stompRef.current?.deactivate();
@@ -129,9 +123,24 @@ export default function ListenerDashboard() {
         <div style={{ maxWidth: 420, margin: "0 auto" }}>
 
           {/* Header */}
-          <div style={{ marginBottom: 40 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
-            {user && <p style={{ color: "#666", margin: "6px 0 0", fontSize: 14 }}>{user.email}</p>}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
+            <div>
+              <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
+              {user && <p style={{ color: "#666", margin: "4px 0 0", fontSize: 14 }}>{user.email}</p>}
+            </div>
+            {/* Profile button */}
+            <button
+              onClick={() => router.push("/listener-profile")}
+              style={{
+                width: 40, height: 40, borderRadius: "50%",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                color: "#fff", fontSize: 18, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+              title="Profile"
+            >
+              👤
+            </button>
           </div>
 
           {/* Incoming call overlay */}
@@ -176,80 +185,73 @@ export default function ListenerDashboard() {
             </div>
           )}
 
-          {/* Earnings card */}
+          {/* Earnings + Withdraw card */}
           <div style={{
             background: "#1a1a1a", borderRadius: 16,
-            padding: "24px", marginBottom: 24, border: "1px solid #2a2a2a",
+            padding: "24px", marginBottom: 16, border: "1px solid #2a2a2a",
           }}>
             <p style={{ color: "#666", fontSize: 13, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 1 }}>
-              Earnings
+              Wallet Balance
             </p>
-            <p style={{ fontSize: 36, fontWeight: 700, margin: 0, color: "#fff" }}>
+            <p style={{ fontSize: 36, fontWeight: 700, margin: "0 0 16px", color: "#fff" }}>
               ₹{balance !== null ? balance.toFixed(2) : "—"}
             </p>
+            <button
+              onClick={() => router.push("/listener-withdraw")}
+              style={{
+                width: "100%", padding: "12px",
+                background: "#f59e0b", color: "#000",
+                border: "none", borderRadius: 10,
+                fontWeight: 700, fontSize: 14, cursor: "pointer",
+              }}
+            >
+              💸 Withdraw Earnings
+            </button>
           </div>
 
-          {/* Withdraw card */}
-          <div style={{
-            background: "#1a1a1a", borderRadius: 16,
-            padding: "24px", marginBottom: 24, border: "1px solid #2a2a2a",
-          }}>
-            <p style={{ color: "#666", fontSize: 13, margin: "0 0 16px", textTransform: "uppercase", letterSpacing: 1 }}>
-              Withdraw Earnings
-            </p>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(e.target.value)}
-                placeholder="Enter amount (min ₹100)"
-                type="number"
-                min="100"
-                style={{
-                  flex: 1, background: "#111", border: "1px solid #2a2a2a",
-                  borderRadius: 10, padding: "10px 14px",
-                  color: "#fff", fontSize: 15, outline: "none",
-                }}
-              />
-              <button
-                onClick={handleWithdraw}
-                disabled={withdrawing || !withdrawAmount}
-                style={{
-                  background: withdrawing || !withdrawAmount ? "#1a1a1a" : "#f59e0b",
-                  color: withdrawing || !withdrawAmount ? "#555" : "#000",
-                  border: withdrawing || !withdrawAmount ? "1px solid #2a2a2a" : "none",
-                  borderRadius: 10, padding: "10px 20px",
-                  fontWeight: 600, fontSize: 14,
-                  cursor: withdrawing || !withdrawAmount ? "not-allowed" : "pointer",
-                  whiteSpace: "nowrap",
-                  opacity: !withdrawAmount ? 0.5 : 1,
-                }}
-              >
-                {withdrawing ? "Processing..." : "Withdraw"}
-              </button>
+          {/* Ratings + Reviews row */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+            {/* Rating card */}
+            <div style={{
+              flex: 1, background: "#1a1a1a", borderRadius: 16,
+              padding: "20px", border: "1px solid #2a2a2a",
+            }}>
+              <p style={{ color: "#666", fontSize: 11, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>
+                Rating
+              </p>
+              {stats ? (
+                <StarRating rating={stats.rating} />
+              ) : (
+                <p style={{ color: "#444", margin: 0, fontSize: 13 }}>Loading...</p>
+              )}
+              <p style={{ color: "#444", fontSize: 11, margin: "8px 0 0" }}>
+                {stats ? `${stats.totalSessions} sessions` : ""}
+              </p>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              {[100, 250, 500, 1000].map((a) => (
-                <button key={a} onClick={() => setWithdrawAmount(String(a))} style={{
-                  flex: 1, padding: "6px 0",
-                  background: withdrawAmount === String(a) ? "#f59e0b22" : "#111",
-                  border: `1px solid ${withdrawAmount === String(a) ? "#f59e0b" : "#2a2a2a"}`,
-                  borderRadius: 8,
-                  color: withdrawAmount === String(a) ? "#f59e0b" : "#555",
-                  fontSize: 12, cursor: "pointer", fontWeight: 600,
-                }}>
-                  ₹{a}
-                </button>
-              ))}
+            {/* Reviews button card */}
+            <div
+              onClick={() => router.push("/listener-reviews")}
+              style={{
+                flex: 1, background: "#1a1a1a", borderRadius: 16,
+                padding: "20px", border: "1px solid #2a2a2a",
+                cursor: "pointer", display: "flex",
+                flexDirection: "column", justifyContent: "space-between",
+              }}
+            >
+              <p style={{ color: "#666", fontSize: 11, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>
+                Flags & Reviews
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 20 }}>🚩</span>
+                <span style={{ fontWeight: 700, fontSize: 20, color: stats && stats.flagCount > 0 ? "#ef4444" : "#22c55e" }}>
+                  {stats ? stats.flagCount : "—"}
+                </span>
+              </div>
+              <p style={{ color: "#555", fontSize: 11, margin: "8px 0 0" }}>
+                View reviews →
+              </p>
             </div>
-
-            {withdrawError && (
-              <p style={{ color: "#ef4444", fontSize: 13, marginTop: 10 }}>{withdrawError}</p>
-            )}
-            {withdrawSuccess && (
-              <p style={{ color: "#22c55e", fontSize: 13, marginTop: 10 }}>{withdrawSuccess}</p>
-            )}
           </div>
 
           {/* Availability card */}
@@ -261,7 +263,7 @@ export default function ListenerDashboard() {
               <p style={{ color: "#555", margin: 0 }}>Loading status...</p>
             ) : (
               <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                   <div>
                     <p style={{ color: "#666", fontSize: 13, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 1 }}>Status</p>
                     <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: available ? "#22c55e" : "#ef4444" }}>
@@ -288,14 +290,14 @@ export default function ListenerDashboard() {
                   </div>
                 </div>
                 <p style={{ color: "#444", fontSize: 13, margin: 0 }}>
-                  {available ? "⏳ Waiting for incoming calls. Keep this tab open." : "Toggle on to start receiving calls."}
+                  {available ? "⏳ Waiting for calls. Keep this tab open." : "Toggle on to start receiving calls."}
                 </p>
               </>
             )}
             {error && <p style={{ color: "#ef4444", fontSize: 13, marginTop: 12 }}>{error}</p>}
           </div>
 
-          {/* History button */}
+          {/* History + Logout */}
           <button
             onClick={() => router.push("/listener-history")}
             style={{
@@ -304,7 +306,7 @@ export default function ListenerDashboard() {
               color: "#555", fontSize: 14, cursor: "pointer", marginBottom: 16,
             }}
           >
-            📋 Session &amp; earnings history
+            📋 Sessions &amp; Earnings History
           </button>
 
           <button

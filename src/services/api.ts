@@ -211,22 +211,62 @@ export const api = {
     return data.data as string;
   },
 
-  // ✅ NEW: Listener withdrawal
-  async withdraw(amount: number): Promise<number> {
-    const res = await fetch(`${BASE}/wallet/me/withdraw`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ amount }),
-    });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.message || "Withdrawal failed");
-    return data.data as number;
-  },
-
   async heartbeat(sessionId: string) {
     await fetch(`${BASE}/sessions/${sessionId}/heartbeat`, {
       method: "POST",
       headers: authHeaders(),
     });
+  },
+
+// ✅ Listener stats (rating, flags, total sessions)
+  async getListenerStats(): Promise<{
+    totalSessions: number;
+    flagCount: number;
+    rating: number;
+    isBlacklisted: boolean;
+  }> {
+    const res = await fetch(`${BASE}/listeners/me/stats`, { headers: authHeaders() });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed");
+    return data.data;
+  },
+
+  // ✅ Listener's own sessions
+  async getListenerSessions(): Promise<Array<{
+    id: string; type: string; status: string; startedAt: string; endedAt: string;
+  }>> {
+    const res = await fetch(`${BASE}/listeners/me/sessions`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  // ✅ Change password
+  async changePassword(currentPassword: string, newPassword: string) {
+    const res = await fetch(`${BASE}/users/me/change-password`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to change password");
+  },
+
+  //  Updated withdraw with payment details
+  async withdraw(
+    amount: number,
+    paymentMethod: string,
+    upiId: string,
+    accountNumber: string,
+    ifscCode: string,
+    accountHolderName: string
+  ): Promise<number> {
+    const res = await fetch(`${BASE}/wallet/me/withdraw`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ amount, paymentMethod, upiId, accountNumber, ifscCode, accountHolderName }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Withdrawal failed");
+    return data.data as number;
   },
 };
