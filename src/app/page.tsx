@@ -68,7 +68,11 @@ export default function Home() {
     try {
       const data = await api.googleAuth(response.credential, "USER");
       localStorage.setItem("token", data.token);
-      router.push(data.role === "LISTENER" ? "/listener-dashboard" : "/dashboard");
+      router.push(
+        data.role === "LISTENER" ? "/listener-dashboard" :
+        data.role === "ADMIN" ? "/admin" :
+        "/dashboard"
+      );
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Google login failed");
     } finally {
@@ -83,7 +87,11 @@ export default function Home() {
     try {
       const data = await api.login(email, password);
       localStorage.setItem("token", data.token);
-      router.push(data.role === "LISTENER" ? "/listener-dashboard" : "/dashboard");
+      router.push(
+        data.role === "LISTENER" ? "/listener-dashboard" :
+        data.role === "ADMIN" ? "/admin" :
+        "/dashboard"
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Login failed";
       if (msg === "EMAIL_NOT_VERIFIED") {
@@ -143,7 +151,11 @@ export default function Home() {
     try {
       const data = await api.verifyEmail(email, code);
       localStorage.setItem("token", data.token);
-      router.push(data.role === "LISTENER" ? "/listener-dashboard" : "/dashboard");
+      router.push(
+        data.role === "LISTENER" ? "/listener-dashboard" :
+        data.role === "ADMIN" ? "/admin" :
+        "/dashboard"
+      );
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Invalid OTP");
     } finally {

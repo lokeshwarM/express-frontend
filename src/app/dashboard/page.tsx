@@ -21,6 +21,7 @@ export default function Dashboard() {
     api.getMe()
       .then((u) => {
         if (u.role === "LISTENER") { router.push("/listener-dashboard"); return; }
+        if (u.role === "ADMIN") { router.push("/admin"); return; }
         setUser(u);
         api.getBalance().then(setBalance);
         api.getActiveSession().then(setActiveSession).catch(() => {});
