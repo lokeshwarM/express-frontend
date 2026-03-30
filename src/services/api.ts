@@ -310,4 +310,16 @@ export const api = {
     const data = await res.json();
     return data.data || [];
   },
+
+  // ✅ Called when WebRTC actually connects — billing clock starts from this moment
+  async markSessionConnected(sessionId: string) {
+    try {
+      await fetch(`${BASE}/sessions/${sessionId}/connected`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+    } catch (e) {
+      console.error("markConnected error:", e);
+    }
+  },
 };

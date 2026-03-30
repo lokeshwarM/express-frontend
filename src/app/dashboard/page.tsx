@@ -5,29 +5,17 @@ import { useRouter } from "next/navigation";
 import { api } from "@/services/api";
 import AuthGuard from "@/components/AuthGuard";
 
-// ✅ Removed local declare global — Window types now live in src/types/global.d.ts
-
 type User = { id: string; email: string; role: string };
 type ActiveSession = { id: string; type: string; status: string } | null;
 
 export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
-  const [amount, setAmount] = useState("");
   const [callType, setCallType] = useState<"VOICE" | "VIDEO">("VOICE");
   const [calling, setCalling] = useState(false);
-  const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<ActiveSession>(null);
   const router = useRouter();
-
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    document.body.appendChild(script);
-    return () => { document.body.removeChild(script); };
-  }, []);
 
   useEffect(() => {
     api.getMe()
@@ -40,59 +28,11 @@ export default function Dashboard() {
       .catch(() => router.push("/"));
   }, []);
 
-  const handleRecharge = async () => {
-    const amt = Number(amount);
-    if (!amt || amt <= 0) return;
-    setError(null);
-    setPaying(true);
-
-    try {
-      const order = await api.createPaymentOrder(amt);
-      const options = {
-        key: order.keyId,
-        amount: order.amount,
-        currency: order.currency,
-        name: "Express",
-        description: "Wallet Recharge",
-        order_id: order.orderId,
-        prefill: { email: user?.email || "" },
-        theme: { color: "#22c55e" },
-        handler: async (response: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) => {
-          try {
-            const newBalance = await api.verifyPayment({
-              razorpayOrderId: response.razorpay_order_id,
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpaySignature: response.razorpay_signature,
-              amount: amt,
-            });
-            setBalance(newBalance);
-            setAmount("");
-          } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : "Payment verification failed");
-          } finally {
-            setPaying(false);
-          }
-        },
-        modal: { ondismiss: () => setPaying(false) },
-      };
-      const rzp = new window.Razorpay(options);
-      rzp.open();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to initiate payment");
-      setPaying(false);
-    }
-  };
-
   const startCall = async (type: "VOICE" | "VIDEO") => {
     setError(null);
     setCalling(true);
     try {
       const session = await api.initiateCall(type);
-      // ✅ Pass session type in URL so call page knows voice vs video
       router.push(`/call?sessionId=${session.id}&type=${type}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not start call");
@@ -108,11 +48,25 @@ export default function Dashboard() {
       }}>
         <div style={{ maxWidth: 420, margin: "0 auto" }}>
 
-          <div style={{ marginBottom: 40 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
-            {user && <p style={{ color: "#666", margin: "6px 0 0", fontSize: 14 }}>{user.email}</p>}
+          {/* Header with profile button */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
+            <div>
+              <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
+              {user && <p style={{ color: "#666", margin: "4px 0 0", fontSize: 14 }}>{user.email}</p>}
+            </div>
+            <button
+              onClick={() => router.push("/user-profile")}
+              style={{
+                width: 40, height: 40, borderRadius: "50%",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                color: "#fff", fontSize: 18, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+              title="Profile"
+            >👤</button>
           </div>
 
+          {/* Active session recovery */}
           {activeSession && (
             <div style={{
               background: "#22c55e18", border: "1px solid #22c55e44",
@@ -128,72 +82,37 @@ export default function Dashboard() {
                 </p>
               </div>
               <button
-                onClick={() => router.push(`/call?sessionId=${activeSession.id}`)}
+                onClick={() => router.push(`/call?sessionId=${activeSession.id}&type=${activeSession.type}`)}
                 style={{
                   padding: "8px 16px", background: "#22c55e", color: "#fff",
                   border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: "pointer",
                 }}
-              >
-                Rejoin
-              </button>
+              >Rejoin</button>
             </div>
           )}
 
-          {/* Balance card */}
+          {/* Balance card — clean, just shows balance + recharge button */}
           <div style={{
             background: "#1a1a1a", borderRadius: 16,
-            padding: "24px", marginBottom: 24, border: "1px solid #2a2a2a",
+            padding: "24px", marginBottom: 16, border: "1px solid #2a2a2a",
           }}>
             <p style={{ color: "#666", fontSize: 13, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 1 }}>
-              Balance
+              Wallet Balance
             </p>
-            <p style={{ fontSize: 36, fontWeight: 700, margin: "0 0 20px", color: "#fff" }}>
+            <p style={{ fontSize: 40, fontWeight: 700, margin: "0 0 20px", color: "#fff" }}>
               ₹{balance !== null ? balance.toFixed(2) : "—"}
             </p>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Enter amount (₹)"
-                type="number"
-                min="1"
-                style={{
-                  flex: 1, background: "#111", border: "1px solid #2a2a2a",
-                  borderRadius: 10, padding: "10px 14px",
-                  color: "#fff", fontSize: 15, outline: "none",
-                }}
-              />
-              <button
-                onClick={handleRecharge}
-                disabled={paying || !amount}
-                style={{
-                  background: paying ? "#1a1a1a" : "#22c55e",
-                  color: paying ? "#555" : "#fff",
-                  border: paying ? "1px solid #2a2a2a" : "none",
-                  borderRadius: 10, padding: "10px 20px",
-                  fontWeight: 600, fontSize: 14,
-                  cursor: paying || !amount ? "not-allowed" : "pointer",
-                  opacity: !amount ? 0.5 : 1, whiteSpace: "nowrap",
-                }}
-              >
-                {paying ? "Opening..." : "Add Money"}
-              </button>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              {[100, 250, 500, 1000].map((a) => (
-                <button key={a} onClick={() => setAmount(String(a))} style={{
-                  flex: 1, padding: "6px 0",
-                  background: amount === String(a) ? "#22c55e22" : "#111",
-                  border: `1px solid ${amount === String(a) ? "#22c55e" : "#2a2a2a"}`,
-                  borderRadius: 8, color: amount === String(a) ? "#22c55e" : "#555",
-                  fontSize: 12, cursor: "pointer", fontWeight: 600,
-                }}>
-                  ₹{a}
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => router.push("/recharge")}
+              style={{
+                width: "100%", padding: "12px",
+                background: "#22c55e", color: "#fff",
+                border: "none", borderRadius: 10,
+                fontWeight: 700, fontSize: 14, cursor: "pointer",
+              }}
+            >
+              💳 Add Money
+            </button>
           </div>
 
           {/* Call section */}
@@ -235,10 +154,8 @@ export default function Dashboard() {
               {calling ? (
                 <>
                   <span style={{
-                    width: 16, height: 16,
-                    border: "2px solid #555", borderTopColor: "#888",
-                    borderRadius: "50%", display: "inline-block",
-                    animation: "spin 0.8s linear infinite",
+                    width: 16, height: 16, border: "2px solid #555", borderTopColor: "#888",
+                    borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite",
                   }} />
                   Connecting...
                 </>
@@ -254,7 +171,7 @@ export default function Dashboard() {
             style={{
               width: "100%", padding: "12px", background: "transparent",
               border: "1px solid #2a2a2a", borderRadius: 12,
-              color: "#555", fontSize: 14, cursor: "pointer", marginBottom: 24,
+              color: "#555", fontSize: 14, cursor: "pointer", marginBottom: 16,
             }}
           >
             📋 Call &amp; transaction history
