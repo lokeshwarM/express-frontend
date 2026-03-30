@@ -322,4 +322,68 @@ export const api = {
       console.error("markConnected error:", e);
     }
   },
+
+// ──────────────────────────────────────────────────────────
+  // ADMIN APIs
+  // ──────────────────────────────────────────────────────────
+
+  async adminGetStats() {
+    const res = await fetch(`${BASE}/admin/stats`, { headers: authHeaders() });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    return data.data;
+  },
+
+  async adminGetListeners() {
+    const res = await fetch(`${BASE}/admin/listeners`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetUsers() {
+    const res = await fetch(`${BASE}/admin/users`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetFlags() {
+    const res = await fetch(`${BASE}/admin/flags`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetReviews() {
+    const res = await fetch(`${BASE}/admin/reviews`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetTransactions(filter: string) {
+    const res = await fetch(`${BASE}/admin/transactions?filter=${filter}`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetSessions() {
+    const res = await fetch(`${BASE}/admin/sessions`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminBlacklistListener(listenerId: string, blacklist: boolean) {
+    const endpoint = blacklist ? "blacklist" : "unblacklist";
+    const res = await fetch(`${BASE}/admin/listeners/${listenerId}/${endpoint}`, {
+      method: "POST", headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+  },
+
+  async adminResetFlags(listenerId: string) {
+    const res = await fetch(`${BASE}/admin/listeners/${listenerId}/reset-flags`, {
+      method: "POST", headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+  },
 };
