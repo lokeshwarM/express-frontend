@@ -386,4 +386,66 @@ export const api = {
     const data = await res.json();
     if (!data.success) throw new Error(data.message);
   },
+
+  // User interest tags
+  async getUserTags(): Promise<string[]> {
+    const res = await fetch(`${BASE}/ai/user/tags`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async saveUserTags(tags: string[]) {
+    const res = await fetch(`${BASE}/ai/user/tags`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(tags),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to save tags");
+  },
+
+  // Listener expertise tags
+  async getListenerTags(): Promise<string[]> {
+    const res = await fetch(`${BASE}/ai/listener/tags`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async saveListenerTags(tags: string[]) {
+    const res = await fetch(`${BASE}/ai/listener/tags`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(tags),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to save tags");
+  },
+
+  // User mood (pre-session)
+  async saveUserMood(mood: string) {
+    const res = await fetch(`${BASE}/ai/user/mood`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ mood }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || "Failed to save mood");
+  },
+
+  async getUserMood(): Promise<string> {
+    const res = await fetch(`${BASE}/ai/user/mood`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || "neutral";
+  },
+
+  // Post-session sentiment analysis (Phase 2.1)
+  async analyzeSessionSentiment(sessionId: string, reviewText: string) {
+    const res = await fetch(`${BASE}/ai/session/${sessionId}/analyze`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ reviewText }),
+    });
+    const data = await res.json();
+    return data.data;
+  },
 };

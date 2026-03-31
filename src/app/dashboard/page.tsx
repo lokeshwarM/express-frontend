@@ -8,6 +8,13 @@ import AuthGuard from "@/components/AuthGuard";
 type User = { id: string; email: string; role: string };
 type ActiveSession = { id: string; type: string; status: string } | null;
 
+const MOODS = [
+  { key: "stressed", emoji: "😔", label: "Stressed" },
+  { key: "anxious", emoji: "😟", label: "Anxious" },
+  { key: "neutral", emoji: "😐", label: "Neutral" },
+  { key: "good", emoji: "🙂", label: "Good" },
+];
+
 export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
@@ -15,6 +22,8 @@ export default function Dashboard() {
   const [calling, setCalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<ActiveSession>(null);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [savingMood, setSavingMood] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -25,9 +34,23 @@ export default function Dashboard() {
         setUser(u);
         api.getBalance().then(setBalance);
         api.getActiveSession().then(setActiveSession).catch(() => {});
+        // Load saved mood
+        api.getUserMood().then(setSelectedMood).catch(() => {});
       })
       .catch(() => router.push("/"));
   }, []);
+
+  const handleMoodSelect = async (mood: string) => {
+    setSelectedMood(mood);
+    setSavingMood(true);
+    try {
+      await api.saveUserMood(mood);
+    } catch (e) {
+      console.error("Mood save error:", e);
+    } finally {
+      setSavingMood(false);
+    }
+  };
 
   const startCall = async (type: "VOICE" | "VIDEO") => {
     setError(null);
@@ -63,7 +86,6 @@ export default function Dashboard() {
                 color: "#fff", fontSize: 18, cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}
-              title="Profile"
             >👤</button>
           </div>
 
@@ -75,9 +97,7 @@ export default function Dashboard() {
               display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
               <div>
-                <p style={{ margin: 0, fontWeight: 600, color: "#22c55e", fontSize: 14 }}>
-                  Active call in progress
-                </p>
+                <p style={{ margin: 0, fontWeight: 600, color: "#22c55e", fontSize: 14 }}>Active call in progress</p>
                 <p style={{ margin: "2px 0 0", color: "#555", fontSize: 12 }}>
                   {activeSession.type === "VOICE" ? "🎙 Voice" : "🎥 Video"} call
                 </p>
@@ -92,7 +112,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Balance card — clean, just shows balance + recharge button */}
+          {/* Balance card */}
           <div style={{
             background: "#1a1a1a", borderRadius: 16,
             padding: "24px", marginBottom: 16, border: "1px solid #2a2a2a",
@@ -100,20 +120,53 @@ export default function Dashboard() {
             <p style={{ color: "#666", fontSize: 13, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 1 }}>
               Wallet Balance
             </p>
-            <p style={{ fontSize: 40, fontWeight: 700, margin: "0 0 20px", color: "#fff" }}>
+            <p style={{ fontSize: 40, fontWeight: 700, margin: "0 0 16px", color: "#fff" }}>
               ₹{balance !== null ? balance.toFixed(2) : "—"}
             </p>
             <button
               onClick={() => router.push("/recharge")}
               style={{
-                width: "100%", padding: "12px",
-                background: "#22c55e", color: "#fff",
-                border: "none", borderRadius: 10,
-                fontWeight: 700, fontSize: 14, cursor: "pointer",
+                width: "100%", padding: "12px", background: "#22c55e", color: "#fff",
+                border: "none", borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: "pointer",
               }}
-            >
-              💳 Add Money
-            </button>
+            >💳 Add Money</button>
+          </div>
+
+          {/*  Phase 2.2 — Mood check before call */}
+          <div style={{
+            background: "#1a1a1a", borderRadius: 16,
+            padding: "20px 24px", marginBottom: 16, border: "1px solid #2a2a2a",
+          }}>
+            <p style={{ color: "#666", fontSize: 13, margin: "0 0 14px", textTransform: "uppercase", letterSpacing: 1 }}>
+              How are you feeling? {savingMood && <span style={{ color: "#444", fontSize: 10 }}>saving...</span>}
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              {MOODS.map((mood) => (
+                <button
+                  key={mood.key}
+                  onClick={() => handleMoodSelect(mood.key)}
+                  style={{
+                    flex: 1, padding: "10px 4px", borderRadius: 10,
+                    background: selectedMood === mood.key ? "#22c55e22" : "#111",
+                    border: `1px solid ${selectedMood === mood.key ? "#22c55e" : "#2a2a2a"}`,
+                    cursor: "pointer", transition: "all 0.15s",
+                    display: "flex", flexDirection: "column",
+                    alignItems: "center", gap: 4,
+                  }}
+                >
+                  <span style={{ fontSize: 22 }}>{mood.emoji}</span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600,
+                    color: selectedMood === mood.key ? "#22c55e" : "#555",
+                  }}>{mood.label}</span>
+                </button>
+              ))}
+            </div>
+            {selectedMood && (
+              <p style={{ color: "#444", fontSize: 11, margin: "10px 0 0", textAlign: "center" }}>
+                ✅ We will match you with the best listener for your mood
+              </p>
+            )}
           </div>
 
           {/* Call section */}
@@ -158,7 +211,7 @@ export default function Dashboard() {
                     width: 16, height: 16, border: "2px solid #555", borderTopColor: "#888",
                     borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite",
                   }} />
-                  Connecting...
+                  Finding best listener...
                 </>
               ) : `${callType === "VOICE" ? "🎙" : "🎥"} Start ${callType === "VOICE" ? "Voice" : "Video"} Call`}
             </button>

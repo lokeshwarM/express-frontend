@@ -156,6 +156,20 @@ export default function ListenerProfilePage() {
             >
               {loading ? "Changing..." : "Change Password"}
             </button>
+
+            <button
+              onClick={() => router.push("/listener-tags")}
+              style={{
+                width: "100%", marginTop: 16, padding: "14px",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                borderRadius: 12, color: "#fff", fontSize: 15,
+                fontWeight: 600, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}
+            >
+              <span>🏷️ Manage Expertise Tags</span>
+              <span style={{ color: "#555" }}>→</span>
+            </button>
           </div>
         </div>
       </div>

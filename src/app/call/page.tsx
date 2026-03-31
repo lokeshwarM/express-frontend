@@ -31,13 +31,13 @@ export default function CallPage() {
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null); // ✅ Audio element for voice calls
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null); //  Audio element for voice calls
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const stompRef = useRef<Client | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startedRef = useRef(false);
   const endedRef = useRef(false);
-  const connectedRef = useRef(false); // ✅ Track if markConnected was already called
+  const connectedRef = useRef(false); //  Track if markConnected was already called
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -104,7 +104,7 @@ export default function CallPage() {
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
   };
 
-  // ✅ Called when WebRTC actually connects — tells backend billing clock starts NOW
+  //  Called when WebRTC actually connects — tells backend billing clock starts NOW
   const handleActuallyConnected = (stream: MediaStream) => {
     if (connectedRef.current) return;
     connectedRef.current = true;
@@ -198,7 +198,7 @@ export default function CallPage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    // ✅ Voice = audio only, Video = audio + video
+    //  Voice = audio only, Video = audio + video
     const constraints = isVoice
       ? { audio: true, video: false }
       : { audio: true, video: true };
@@ -221,12 +221,12 @@ export default function CallPage() {
 
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-    // ✅ ontrack fires for BOTH audio and video streams
+    //  ontrack fires for BOTH audio and video streams
     pc.ontrack = (event) => {
       handleActuallyConnected(event.streams[0]);
     };
 
-    // ✅ Also detect connection via connectionState change — fallback for voice
+    //  Also detect connection via connectionState change — fallback for voice
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected" && !connectedRef.current) {
         // Get the remote stream from receivers
@@ -301,6 +301,10 @@ export default function CallPage() {
     setSubmittingReview(true);
     try {
       await api.submitReview(endedSessionId, rating, reviewComment);
+      // analyze sentiment of the review comment
+      if (reviewComment.trim()) {
+        await api.analyzeSessionSentiment(endedSessionId, reviewComment).catch(() => {});
+      }
     } catch (e) {
       console.error("Review error:", e);
     } finally {
@@ -311,7 +315,7 @@ export default function CallPage() {
 
   return (
     <AuthGuard>
-      {/* ✅ Hidden audio element for voice calls */}
+      {/*  Hidden audio element for voice calls */}
       <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
 
       <div style={{
