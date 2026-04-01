@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
@@ -13,6 +13,14 @@ type SignalMessage = {
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
+type AiSuggestion = {
+  isCritical: boolean;
+  suggestions: string[];
+  detectedEmotion: string;
+  urgencyLevel: string;
+  alert: string;
+};
+
 export default function ListenerCallPage() {
   const params = useSearchParams();
   const router = useRouter();
@@ -22,7 +30,7 @@ export default function ListenerCallPage() {
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null); // ✅ For voice calls
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const stompRef = useRef<Client | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -32,6 +40,9 @@ export default function ListenerCallPage() {
   const connectedRef = useRef(false);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const aiTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const transcriptRef = useRef<string>("");
 
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(isVoice);
@@ -39,6 +50,14 @@ export default function ListenerCallPage() {
   const [connected, setConnected] = useState(false);
   const [ending, setEnding] = useState(false);
   const [volume, setVolume] = useState(1);
+
+  // ✅ Phase 3 AI state
+  const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(true);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [userMood, setUserMood] = useState("neutral");
+  const [showCriticalAlert, setShowCriticalAlert] = useState(false);
+  const [detectedEmotion, setDetectedEmotion] = useState<string | null>(null);
 
   useEffect(() => {
     if (connected) {
@@ -51,6 +70,11 @@ export default function ListenerCallPage() {
     if (remoteVideoRef.current) remoteVideoRef.current.volume = volume;
     if (remoteAudioRef.current) remoteAudioRef.current.volume = volume;
   }, [volume]);
+
+  // ✅ Fetch user's mood for context
+  useEffect(() => {
+    api.getUserMood().then(setUserMood).catch(() => {});
+  }, []);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -72,8 +96,92 @@ export default function ListenerCallPage() {
     setCameraOff((c) => !c);
   };
 
+  //  Start speech recognition to capture transcript
+  const startTranscription = () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          // Keep last 500 chars — sliding window
+          transcriptRef.current = (transcriptRef.current + " " + transcript)
+            .slice(-500);
+        } else {
+          interim = transcript;
+        }
+      }
+    };
+
+    recognition.onerror = () => {
+      // Silently restart on error
+      setTimeout(() => {
+        if (!endedRef.current) recognition.start();
+      }, 2000);
+    };
+
+    recognition.onend = () => {
+      if (!endedRef.current) recognition.start();
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+  };
+
+  //  AI suggestion fetch — called every 60 seconds
+  const fetchAiSuggestions = useCallback(async () => {
+    const transcript = transcriptRef.current.trim();
+    if (!transcript || transcript.length < 20) return; // need enough text
+
+    setAiLoading(true);
+    try {
+      const result = await api.getAiSuggestions(sessionId, transcript, userMood);
+      if (!result) return;
+
+      setAiSuggestion(result);
+      setDetectedEmotion(result.detectedEmotion);
+
+      // Critical alert
+      if (result.isCritical || result.urgencyLevel === "critical") {
+        setShowCriticalAlert(true);
+      }
+    } catch (e) {
+      console.error("AI suggestion error:", e);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [sessionId, userMood]);
+
+  //  Start AI polling once connected
+  useEffect(() => {
+    if (connected) {
+      startTranscription();
+      // First suggestion after 30s, then every 60s
+      const firstTimeout = setTimeout(() => {
+        fetchAiSuggestions();
+        aiTimerRef.current = setInterval(fetchAiSuggestions, 60000);
+      }, 30000);
+
+      return () => {
+        clearTimeout(firstTimeout);
+        if (aiTimerRef.current) clearInterval(aiTimerRef.current);
+        recognitionRef.current?.stop();
+      };
+    }
+  }, [connected, fetchAiSuggestions]);
+
   const cleanup = () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (aiTimerRef.current) clearInterval(aiTimerRef.current);
+    recognitionRef.current?.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     pcRef.current?.close();
     pcRef.current = null;
@@ -88,7 +196,6 @@ export default function ListenerCallPage() {
     if (connectedRef.current) return;
     connectedRef.current = true;
     setConnected(true);
-
     if (isVoice && remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = stream;
       remoteAudioRef.current.play().catch(console.error);
@@ -141,7 +248,6 @@ export default function ListenerCallPage() {
               try { await pc.addIceCandidate(c); } catch {}
             }
             pendingCandidatesRef.current = [];
-
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             client.publish({
@@ -176,45 +282,27 @@ export default function ListenerCallPage() {
   const startListener = async () => {
     if (startedRef.current) return;
     startedRef.current = true;
-
-    // ✅ Match constraints to session type
-    const constraints = isVoice
-      ? { audio: true, video: false }
-      : { audio: true, video: true };
-
+    const constraints = isVoice ? { audio: true, video: false } : { audio: true, video: true };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     streamRef.current = stream;
-
-    if (!isVoice && localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-    }
+    if (!isVoice && localVideoRef.current) localVideoRef.current.srcObject = stream;
 
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
       ],
     });
     pcRef.current = pc;
-
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-    // ✅ ontrack fires for audio streams too
-    pc.ontrack = (event) => {
-      handleActuallyConnected(event.streams[0]);
-    };
-
-    // ✅ Fallback via connectionState
+    pc.ontrack = (event) => { handleActuallyConnected(event.streams[0]); };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected" && !connectedRef.current) {
-        const remoteStream = new MediaStream(
-          pc.getReceivers().map((r) => r.track)
-        );
+        const remoteStream = new MediaStream(pc.getReceivers().map((r) => r.track));
         handleActuallyConnected(remoteStream);
       }
     };
-
     pc.onicecandidate = (event) => {
       if (event.candidate && stompRef.current?.connected) {
         stompRef.current.publish({
@@ -223,7 +311,6 @@ export default function ListenerCallPage() {
         });
       }
     };
-
     connectWebSocket();
   };
 
@@ -237,14 +324,12 @@ export default function ListenerCallPage() {
     if (endedRef.current) return;
     endedRef.current = true;
     setEnding(true);
-
     if (stompRef.current?.connected) {
       stompRef.current.publish({
         destination: "/app/signal",
         body: JSON.stringify({ type: "end", sessionId }),
       });
     }
-
     try {
       const result = await api.endSession(sessionId);
       if (result && !result.success) console.error("End session failed:", result.message);
@@ -256,17 +341,157 @@ export default function ListenerCallPage() {
     }
   };
 
+  const emotionColor = (emotion: string) => {
+    const map: Record<string, string> = {
+      stressed: "#f59e0b", anxious: "#f59e0b", sad: "#3b82f6",
+      angry: "#ef4444", crisis: "#ef4444", neutral: "#555", positive: "#22c55e",
+    };
+    return map[emotion] || "#555";
+  };
+
   return (
     <AuthGuard>
-      {/* ✅ Hidden audio element for voice calls */}
       <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
+      {/* ✅ Critical State Alert — full screen overlay */}
+      {showCriticalAlert && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(239,68,68,0.95)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 300, flexDirection: "column", padding: 32, textAlign: "center",
+        }}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>⚠️</div>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: "0 0 12px" }}>
+            User May Be in Distress
+          </h2>
+          <p style={{ color: "#fff", fontSize: 16, margin: "0 0 8px", opacity: 0.9 }}>
+            The AI has detected possible signs of a crisis situation.
+          </p>
+          <p style={{ color: "#fff", fontSize: 14, margin: "0 0 32px", opacity: 0.7 }}>
+            Please respond calmly, ask if they are safe, and encourage professional help if needed.
+          </p>
+          <div style={{ display: "flex", gap: 16 }}>
+            <button
+              onClick={() => setShowCriticalAlert(false)}
+              style={{
+                padding: "14px 28px", background: "#fff", color: "#ef4444",
+                border: "none", borderRadius: 12, fontSize: 15,
+                fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              I Understand
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={{
         minHeight: "100vh", background: "#0a0a0a",
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         fontFamily: "'DM Sans', sans-serif", padding: 24,
+        position: "relative",
       }}>
+
+        {/* ✅ AI Assistant Panel — visible only to listener, top right */}
+        {connected && showAiPanel && (
+          <div style={{
+            position: "fixed", top: 16, right: 16,
+            width: 280, background: "#111",
+            borderRadius: 16, border: "1px solid #2a2a2a",
+            padding: "16px", zIndex: 100,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+          }}>
+            {/* Panel header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}>🤖</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>AI Co-pilot</span>
+                {aiLoading && (
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: "#f59e0b", display: "inline-block",
+                    animation: "pulse 1s ease-in-out infinite",
+                  }} />
+                )}
+              </div>
+              <button
+                onClick={() => setShowAiPanel(false)}
+                style={{ background: "none", border: "none", color: "#444", fontSize: 16, cursor: "pointer" }}
+              >✕</button>
+            </div>
+
+            {/* Detected emotion */}
+            {detectedEmotion && (
+              <div style={{
+                background: "#1a1a1a", borderRadius: 8, padding: "6px 10px",
+                marginBottom: 10, display: "flex", alignItems: "center", gap: 6,
+              }}>
+                <span style={{ fontSize: 11, color: "#555" }}>Detected:</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: emotionColor(detectedEmotion),
+                  textTransform: "capitalize",
+                }}>{detectedEmotion}</span>
+              </div>
+            )}
+
+            {/* Suggestions */}
+            {aiSuggestion ? (
+              <div>
+                <p style={{ color: "#555", fontSize: 10, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>
+                  Suggested Responses
+                </p>
+                {aiSuggestion.suggestions.map((s, i) => (
+                  <div key={i} style={{
+                    background: "#1a1a1a", borderRadius: 8,
+                    padding: "10px 12px", marginBottom: 8,
+                    border: "1px solid #2a2a2a", cursor: "pointer",
+                  }}
+                    onClick={() => {
+                      // Copy to clipboard for easy use
+                      navigator.clipboard?.writeText(s).catch(() => {});
+                    }}
+                    title="Click to copy"
+                  >
+                    <p style={{ color: "#ccc", fontSize: 12, margin: 0, lineHeight: 1.5 }}>
+                      {s}
+                    </p>
+                  </div>
+                ))}
+                <p style={{ color: "#333", fontSize: 10, margin: "8px 0 0", textAlign: "center" }}>
+                  Updates every 60s · Click suggestion to copy
+                </p>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: "12px 0" }}>
+                <p style={{ color: "#333", fontSize: 12, margin: 0 }}>
+                  {connected
+                    ? "AI suggestions will appear after 30s..."
+                    : "Waiting for connection..."}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Re-show AI panel button if hidden */}
+        {connected && !showAiPanel && (
+          <button
+            onClick={() => setShowAiPanel(true)}
+            style={{
+              position: "fixed", top: 16, right: 16,
+              padding: "8px 12px", background: "#1a1a1a",
+              border: "1px solid #2a2a2a", borderRadius: 10,
+              color: "#fff", fontSize: 12, cursor: "pointer",
+              zIndex: 100,
+            }}
+          >
+            🤖 AI
+          </button>
+        )}
+
+        {/* Timer */}
         <div style={{ marginBottom: 20, textAlign: "center" }}>
           <div style={{ fontSize: 14, color: "#555", marginBottom: 4 }}>
             {isVoice ? "🎙 Voice Call" : "🎥 Video Call"} · Listener
@@ -282,6 +507,7 @@ export default function ListenerCallPage() {
           </div>
         </div>
 
+        {/* Video — only for VIDEO */}
         {!isVoice && (
           <div style={{ position: "relative", marginBottom: 24 }}>
             <video ref={remoteVideoRef} autoPlay playsInline style={{
@@ -306,6 +532,7 @@ export default function ListenerCallPage() {
           </div>
         )}
 
+        {/* Voice avatar */}
         {isVoice && (
           <div style={{
             width: 120, height: 120, borderRadius: "50%",
@@ -317,6 +544,7 @@ export default function ListenerCallPage() {
           }}>🎙</div>
         )}
 
+        {/* Controls */}
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 20 }}>
           <button onClick={toggleMute} style={{
             width: 52, height: 52, borderRadius: "50%", border: "none", cursor: "pointer",
@@ -341,6 +569,7 @@ export default function ListenerCallPage() {
           )}
         </div>
 
+        {/* Volume slider */}
         <div style={{
           display: "flex", alignItems: "center", gap: 10,
           background: "#1a1a1a", borderRadius: 20, padding: "8px 16px", border: "1px solid #2a2a2a",
@@ -356,6 +585,13 @@ export default function ListenerCallPage() {
           Session {sessionId?.slice(0, 8)}... · Listener
         </p>
       </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </AuthGuard>
   );
 }

@@ -448,4 +448,25 @@ export const api = {
     const data = await res.json();
     return data.data;
   },
+
+  // Phase 3 — real-time AI suggestions for listener
+  async getAiSuggestions(sessionId: string, transcript: string, userMood: string): Promise<{
+    isCritical: boolean;
+    suggestions: string[];
+    detectedEmotion: string;
+    urgencyLevel: string;
+    alert: string;
+  } | null> {
+    try {
+      const res = await fetch(`${BASE}/ai/session/${sessionId}/suggest`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ transcript, userMood }),
+      });
+      const data = await res.json();
+      return data.data;
+    } catch {
+      return null;
+    }
+  },
 };
