@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import SockJS from "sockjs-client";
-import { Client } from "@stomp/stompjs";
 import { api } from "@/services/api";
 import AuthGuard from "@/components/AuthGuard";
+//  Import global socket context — no local WebSocket needed here
+import { useListenerSocket } from "@/context/ListenerSocketContext";
 
 type User = { id: string; email: string; role: string };
-type IncomingCall = { sessionId: string; callType: string };
 type Stats = { totalSessions: number; flagCount: number; rating: number; isBlacklisted: boolean };
 
 function StarRating({ rating }: { rating: number }) {
@@ -17,7 +16,7 @@ function StarRating({ rating }: { rating: number }) {
       {[1, 2, 3, 4, 5].map((star) => (
         <span key={star} style={{
           fontSize: 16,
-          color: rating >= star ? "#f59e0b" : rating >= star - 0.5 ? "#f59e0b" : "#2a2a2a",
+          color: rating >= star ? "#f59e0b" : "#2a2a2a",
           opacity: rating >= star - 0.5 ? 1 : 0.4,
         }}>★</span>
       ))}
@@ -32,10 +31,14 @@ export default function ListenerDashboard() {
   const [balance, setBalance] = useState<number | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [toggling, setToggling] = useState(false);
-  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
-  const stompRef = useRef<Client | null>(null);
+
+  // Global socket — the incoming call overlay is rendered by ListenerSocketProvider,
+  //    so it works on this page AND every other page the listener navigates to.
+  //    We only need acceptCall/rejectCall if we want to handle them here, but since
+  //    the overlay lives globally we don't need to render anything extra here.
+  useListenerSocket(); // keep hook call so ESLint is happy; values used by the provider overlay
 
   useEffect(() => {
     api.getMe()
@@ -46,51 +49,9 @@ export default function ListenerDashboard() {
         setAvailable(isAvailable);
         api.getBalance().then(setBalance);
         api.getListenerStats().then(setStats).catch(() => {});
-        connectSocket(u.id);
       })
       .catch(() => router.push("/"));
-
-    return () => { stompRef.current?.deactivate(); };
   }, []);
-
-  const connectSocket = (userId: string) => {
-    const WS_BASE = typeof window !== "undefined" && window.location.protocol === "https:"
-      ? window.location.origin
-      : (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080");
-
-    const socket = new SockJS(`${WS_BASE}/ws`);
-    const client = new Client({
-      webSocketFactory: () => socket,
-      reconnectDelay: 5000,
-      onConnect: () => {
-        client.subscribe(`/topic/listener/${userId}`, (msg) => {
-          const data = JSON.parse(msg.body);
-          if (data.type === "incoming_call") {
-            setIncomingCall({ sessionId: data.sessionId, callType: data.callType });
-          }
-        });
-      },
-    });
-    client.activate();
-    stompRef.current = client;
-  };
-
-  const acceptCall = () => {
-    if (!incomingCall) return;
-    const { sessionId, callType } = incomingCall;
-    setIncomingCall(null);
-    router.push(`/listener?sessionId=${sessionId}&type=${callType}`);
-  };
-
-  const rejectCall = () => {
-    if (!incomingCall) return;
-    stompRef.current?.publish({
-      destination: "/app/signal",
-      body: JSON.stringify({ type: "reject", sessionId: incomingCall.sessionId }),
-    });
-    api.setAvailability(true).then(() => setAvailable(true)).catch(console.error);
-    setIncomingCall(null);
-  };
 
   const toggleAvailability = async () => {
     if (available === null) return;
@@ -108,7 +69,6 @@ export default function ListenerDashboard() {
 
   const logout = () => {
     api.setAvailability(false).catch(console.error).finally(() => {
-      stompRef.current?.deactivate();
       localStorage.removeItem("token");
       router.push("/");
     });
@@ -128,7 +88,6 @@ export default function ListenerDashboard() {
               <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Express</h1>
               {user && <p style={{ color: "#666", margin: "4px 0 0", fontSize: 14 }}>{user.email}</p>}
             </div>
-            {/* Profile button */}
             <button
               onClick={() => router.push("/listener-profile")}
               style={{
@@ -143,47 +102,8 @@ export default function ListenerDashboard() {
             </button>
           </div>
 
-          {/* Incoming call overlay */}
-          {incomingCall && (
-            <div style={{
-              position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
-              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
-            }}>
-              <div style={{
-                background: "#1a1a1a", borderRadius: 24, padding: "40px 32px",
-                textAlign: "center", width: 320, border: "1px solid #2a2a2a",
-              }}>
-                <div style={{
-                  width: 72, height: 72, borderRadius: "50%",
-                  background: incomingCall.callType === "VOICE" ? "#22c55e22" : "#3b82f622",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 32, margin: "0 auto 20px",
-                  animation: "pulse 1.5s ease-in-out infinite",
-                }}>
-                  {incomingCall.callType === "VOICE" ? "🎙" : "🎥"}
-                </div>
-                <p style={{ color: "#888", fontSize: 13, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: 1 }}>Incoming</p>
-                <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 6px" }}>
-                  {incomingCall.callType === "VOICE" ? "Voice" : "Video"} Call
-                </h2>
-                <p style={{ color: "#555", fontSize: 13, margin: "0 0 32px" }}>
-                  Session {incomingCall.sessionId.slice(0, 8)}...
-                </p>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button onClick={rejectCall} style={{
-                    flex: 1, padding: "14px", background: "#ef444422",
-                    color: "#ef4444", border: "1px solid #ef444444",
-                    borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer",
-                  }}>✕ Decline</button>
-                  <button onClick={acceptCall} style={{
-                    flex: 1, padding: "14px", background: "#22c55e",
-                    color: "#fff", border: "none",
-                    borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer",
-                  }}>✓ Accept</button>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* NOTE: Incoming call overlay is now rendered globally by ListenerSocketProvider
+              in layout.tsx — no need to render it here. It shows on every page. */}
 
           {/* Earnings + Withdraw card */}
           <div style={{
@@ -211,7 +131,6 @@ export default function ListenerDashboard() {
 
           {/* Ratings + Reviews row */}
           <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-            {/* Rating card */}
             <div style={{
               flex: 1, background: "#1a1a1a", borderRadius: 16,
               padding: "20px", border: "1px solid #2a2a2a",
@@ -229,7 +148,6 @@ export default function ListenerDashboard() {
               </p>
             </div>
 
-            {/* Reviews button card */}
             <div
               onClick={() => router.push("/listener-reviews")}
               style={{
@@ -240,7 +158,7 @@ export default function ListenerDashboard() {
               }}
             >
               <p style={{ color: "#666", fontSize: 11, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>
-                Flags & Reviews
+                Flags &amp; Reviews
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 20 }}>🚩</span>
@@ -290,7 +208,9 @@ export default function ListenerDashboard() {
                   </div>
                 </div>
                 <p style={{ color: "#444", fontSize: 13, margin: 0 }}>
-                  {available ? "⏳ Waiting for calls. Keep this tab open." : "Toggle on to start receiving calls."}
+                  {available
+                    ? "⏳ Waiting for calls. You will be notified on any page."
+                    : "Toggle on to start receiving calls."}
                 </p>
               </>
             )}
