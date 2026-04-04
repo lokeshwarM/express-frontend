@@ -218,7 +218,7 @@ export const api = {
     });
   },
 
-// ✅ Listener stats (rating, flags, total sessions)
+//  Listener stats (rating, flags, total sessions)
   async getListenerStats(): Promise<{
     totalSessions: number;
     flagCount: number;
@@ -231,7 +231,7 @@ export const api = {
     return data.data;
   },
 
-  // ✅ Listener's own sessions
+  //  Listener's own sessions
   async getListenerSessions(): Promise<Array<{
     id: string; type: string; status: string; startedAt: string; endedAt: string;
   }>> {
@@ -240,7 +240,7 @@ export const api = {
     return data.data || [];
   },
 
-  // ✅ Change password
+  //  Change password
   async changePassword(currentPassword: string, newPassword: string) {
     const res = await fetch(`${BASE}/users/me/change-password`, {
       method: "POST",
@@ -270,7 +270,7 @@ export const api = {
     return data.data as number;
   },
 
-// ✅ Flag a listener during session
+//  Flag a listener during session
   async flagListener(sessionId: string, reason: string) {
     const res = await fetch(`${BASE}/flags`, {
       method: "POST",
@@ -281,7 +281,7 @@ export const api = {
     if (!data.success) throw new Error(data.message || "Failed to flag");
   },
 
-  // ✅ Submit review after session
+  //  Submit review after session
   async submitReview(sessionId: string, rating: number, comment: string) {
     const res = await fetch(`${BASE}/listeners/review`, {
       method: "POST",
@@ -292,7 +292,7 @@ export const api = {
     if (!data.success) throw new Error(data.message || "Failed to submit review");
   },
 
-  // ✅ Get listener reviews (for listener-reviews page)
+  //  Get listener reviews (for listener-reviews page)
   async getListenerReviews(): Promise<Array<{
     id: string; rating: number; comment: string;
     userDisplayId: string; sessionId: string; createdAt: string;
@@ -302,7 +302,7 @@ export const api = {
     return data.data || [];
   },
 
-  // ✅ Get listener flags with details
+  //  Get listener flags with details
   async getListenerFlags(): Promise<Array<{
     id: string; reason: string; sessionId: string; createdAt: string;
   }>> {
@@ -311,7 +311,7 @@ export const api = {
     return data.data || [];
   },
 
-  // ✅ Called when WebRTC actually connects — billing clock starts from this moment
+  //  Called when WebRTC actually connects — billing clock starts from this moment
   async markSessionConnected(sessionId: string) {
     try {
       await fetch(`${BASE}/sessions/${sessionId}/connected`, {
@@ -468,5 +468,48 @@ export const api = {
     } catch {
       return null;
     }
+  },
+
+  // Phase 5 — User memory profile
+  async getUserMemory(): Promise<{
+    totalSessions: number;
+    avgSatisfactionScore: number;
+    dominantEmotion: string;
+    recurringTopics: string;
+    recurringStress: boolean;
+    lastSessionSentiment: string;
+    emotionalTrend: string;
+    updatedAt: string;
+  } | null> {
+    try {
+      const res = await fetch(`${BASE}/ai/user/memory`, { headers: authHeaders() });
+      const data = await res.json();
+      return data.data;
+    } catch {
+      return null;
+    }
+  },
+
+  // Phase 4 — Session evaluation
+  async getSessionEvaluation(sessionId: string) {
+    try {
+      const res = await fetch(`${BASE}/ai/session/${sessionId}/evaluation`, { headers: authHeaders() });
+      const data = await res.json();
+      return data.data;
+    } catch {
+      return null;
+    }
+  },
+
+  async adminGetAnomalies() {
+    const res = await fetch(`${BASE}/admin/anomalies`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
+  },
+
+  async adminGetMemories() {
+    const res = await fetch(`${BASE}/admin/user-memories`, { headers: authHeaders() });
+    const data = await res.json();
+    return data.data || [];
   },
 };
