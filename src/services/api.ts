@@ -87,10 +87,32 @@ export const api = {
   },
 
   async resendOtp(email: string, type: "EMAIL_VERIFY" | "PASSWORD_RESET") {
-    await fetch(`${BASE}/auth/resend-otp?email=${encodeURIComponent(email)}&type=${type}`, {
+    const res = await fetch(`${BASE}/auth/resend-otp?email=${encodeURIComponent(email)}&type=${type}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
+    // #region agent log
+    fetch("http://127.0.0.1:7668/ingest/15120f85-35bf-43be-a8e5-ea26ca7ff35f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "5e2811" },
+      body: JSON.stringify({
+        sessionId: "5e2811",
+        runId: "pre-verify",
+        hypothesisId: "H1",
+        location: "api.ts:resendOtp",
+        message: "resend-otp fetch completed",
+        data: {
+          httpStatus: res.status,
+          ok: res.ok,
+          baseRoute: typeof window !== "undefined" && window.location.protocol === "https:" ? "vercel-/api-proxy" : "direct-backend",
+          otpType: type,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    const data = await jsonOrThrow(res);
+    if (!data.success) throw new Error(data.message || "Failed to resend OTP");
   },
 
   async forgotPassword(email: string) {
