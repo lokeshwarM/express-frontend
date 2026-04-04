@@ -51,7 +51,7 @@ export default function ListenerCallPage() {
   const [ending, setEnding] = useState(false);
   const [volume, setVolume] = useState(1);
 
-  // ✅ Phase 3 AI state
+  //  Phase 3 AI state
   const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
@@ -98,11 +98,11 @@ export default function ListenerCallPage() {
 
   //  Start speech recognition to capture transcript
   const startTranscription = () => {
-    const SpeechRecognition =
+    const SpeechRecognitionAPI =
       window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognitionAPI) return;
 
-    const recognition = new SpeechRecognition();
+    const recognition = new SpeechRecognitionAPI();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
