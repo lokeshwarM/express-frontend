@@ -138,19 +138,25 @@ export function ListenerSocketProvider({
     }
   }, [connect]);
 
-  // Resolve userId from JWT token on mount (works on every page)
-  useEffect(() => {
+  // Try to resolve userId and connect. Returns true if connection is live or in-flight.
+  const tryConnect = useCallback(() => {
+    if (stompRef.current?.connected || isConnectingRef.current) return true;
+    if (userIdRef.current) { connect(userIdRef.current); return true; }
+
     const token = localStorage.getItem("token");
-    if (!token) return;
+    if (!token) return false;
 
     const payload = decodeJwtPayload(token);
     const role = String(payload?.role ?? "").toUpperCase();
+    if (role !== "LISTENER") return false;
 
-    // Only connect for listeners
-    if (role !== "LISTENER") return;
+    // Determine correct base URL for the API call
+    const API_BASE =
+      typeof window !== "undefined" && window.location.protocol === "https:"
+        ? "/api"
+        : process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
-    // Fetch the real user ID from the /users/me endpoint
-    fetch("/api/users/me", {
+    fetch(`${API_BASE}/users/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
@@ -160,10 +166,32 @@ export function ListenerSocketProvider({
         userIdRef.current = userId;
         connect(userId);
       })
-      .catch(() => {/* silent — not a listener or not logged in */});
+      .catch(() => {/* silent */});
+
+    return true; // fetch is in-flight, stop polling
+  }, [connect]);
+
+  // On mount: try immediately. If no token yet (e.g. layout mounted on login
+  // page), poll every 2 s until login completes and a token appears.
+  // Next.js App Router keeps the root layout mounted across navigations,
+  // so the [] effect only fires once — polling bridges the gap.
+  useEffect(() => {
+    if (tryConnect()) {
+      // Already connected or fetch in-flight — no polling needed
+      return () => {
+        stompRef.current?.deactivate();
+        stompRef.current = null;
+        isConnectingRef.current = false;
+      };
+    }
+
+    // Token not available yet — poll until login finishes
+    const poll = setInterval(() => {
+      if (tryConnect()) clearInterval(poll);
+    }, 2000);
 
     return () => {
-      // Deactivate only when the provider genuinely unmounts (e.g. full logout)
+      clearInterval(poll);
       stompRef.current?.deactivate();
       stompRef.current = null;
       isConnectingRef.current = false;
