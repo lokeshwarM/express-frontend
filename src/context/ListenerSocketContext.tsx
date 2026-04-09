@@ -30,21 +30,6 @@ export function useListenerSocket() {
   return useContext(ListenerSocketContext);
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(
-      base64.length + ((4 - (base64.length % 4)) % 4),
-      "="
-    );
-    return JSON.parse(atob(padded)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 export function ListenerSocketProvider({
   children,
 }: {
@@ -56,13 +41,14 @@ export function ListenerSocketProvider({
   const stompRef = useRef<Client | null>(null);
   const userIdRef = useRef<string | null>(null);
   const isConnectingRef = useRef(false);
+  // Prevents re-calling /users/me on every route change once we know user is NOT a listener
+  const notListenerRef = useRef(false);
 
   const connect = useCallback((userId: string) => {
     if (stompRef.current?.connected) return;
     if (isConnectingRef.current) return;
     isConnectingRef.current = true;
 
-    // Tear down any stale client first
     if (stompRef.current) {
       try { stompRef.current.deactivate(); } catch { /* ignore */ }
       stompRef.current = null;
@@ -73,14 +59,18 @@ export function ListenerSocketProvider({
         ? window.location.origin
         : process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
+    console.log("[ListenerSocket] connecting for userId:", userId, "via", WS_BASE);
+
     const client = new Client({
       webSocketFactory: () => new SockJS(`${WS_BASE}/ws`),
       reconnectDelay: 5000,
       onConnect: () => {
         isConnectingRef.current = false;
+        console.log("[ListenerSocket] STOMP connected. Subscribing to /topic/listener/" + userId);
         client.subscribe(`/topic/listener/${userId}`, (msg) => {
           try {
             const data = JSON.parse(msg.body) as Record<string, unknown>;
+            console.log("[ListenerSocket] message received:", data);
             const type = String(data.type ?? "").toLowerCase();
             const sessionId = String(data.sessionId ?? data.id ?? "");
             const callType = String(data.callType ?? data.sessionType ?? "VOICE");
@@ -88,13 +78,20 @@ export function ListenerSocketProvider({
               (type === "incoming_call" || type === "incoming-call" || type === "call_created") &&
               sessionId
             ) {
+              console.log("[ListenerSocket] INCOMING CALL →", { sessionId, callType });
               setIncomingCall({ sessionId, callType });
             }
-          } catch { /* ignore malformed */ }
+          } catch { /* ignore malformed messages */ }
         });
       },
-      onDisconnect: () => { isConnectingRef.current = false; },
-      onStompError: () => { isConnectingRef.current = false; },
+      onDisconnect: () => {
+        console.log("[ListenerSocket] disconnected");
+        isConnectingRef.current = false;
+      },
+      onStompError: (frame) => {
+        console.error("[ListenerSocket] STOMP error:", frame);
+        isConnectingRef.current = false;
+      },
     });
 
     client.activate();
@@ -102,51 +99,51 @@ export function ListenerSocketProvider({
   }, []);
 
   // ─── KEY FIX ───────────────────────────────────────────────────────────────
-  // The root layout mounts on the login page (no token yet).
-  // useEffect([], []) fires once — finds no token — returns early — socket never
-  // connects. After login, Next.js navigates without remounting the layout, so
-  // the effect never re-fires.
+  // The JWT token only stores the user's email (no role field — confirmed in
+  // JwtService.java). Decoding the JWT for role always returned undefined,
+  // causing an early return and the socket never connecting.
   //
-  // Fix: depend on `pathname`. Every navigation (including / → /listener-dashboard
-  // right after login) re-runs this effect with a fresh localStorage check.
-  // Once connected, the guards at the top make it a no-op on further navigations.
+  // Fix: call /users/me directly to get the real role + userId, exactly like
+  // the rest of the app does (api.getMe()). This effect re-runs on every
+  // route change so it connects right after login navigates from "/" to
+  // "/listener-dashboard" without a page refresh.
   // ───────────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Already alive — nothing to do
     if (stompRef.current?.connected || isConnectingRef.current) return;
-
-    // userId already resolved — just reconnect
-    if (userIdRef.current) {
-      connect(userIdRef.current);
-      return;
-    }
+    if (notListenerRef.current) return; // already confirmed not a listener
+    if (userIdRef.current) { connect(userIdRef.current); return; } // reconnect
 
     const token = localStorage.getItem("token");
     if (!token) return;
 
-    const payload = decodeJwtPayload(token);
-    if (String(payload?.role ?? "").toUpperCase() !== "LISTENER") return;
-
-    // Use the Vercel /api proxy on HTTPS, direct URL in local dev
     const BASE =
       typeof window !== "undefined" && window.location.protocol === "https:"
         ? "/api"
         : process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+
+    console.log("[ListenerSocket] fetching /users/me to determine role...");
 
     fetch(`${BASE}/users/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((body) => {
-        const userId: string = body?.data?.id;
-        if (!userId) return;
-        userIdRef.current = userId;
-        connect(userId);
+        const user = body?.data as { id: string; role: string } | undefined;
+        if (!user?.id) return;
+        if (String(user.role ?? "").toUpperCase() !== "LISTENER") {
+          notListenerRef.current = true; // stop retrying for non-listeners
+          console.log("[ListenerSocket] user role is", user.role, "— skipping socket");
+          return;
+        }
+        userIdRef.current = user.id;
+        connect(user.id);
       })
-      .catch(() => {});
-  }, [pathname, connect]); // re-run on every route change
+      .catch(() => {
+        console.warn("[ListenerSocket] /users/me fetch failed — will retry on next navigation");
+      });
+  }, [pathname, connect]); // re-runs on every route change
 
-  // Deactivate only when the provider truly unmounts (full logout / page close)
+  // Deactivate only on provider unmount (logout / page close)
   useEffect(() => {
     return () => {
       stompRef.current?.deactivate();
@@ -155,7 +152,7 @@ export function ListenerSocketProvider({
     };
   }, []);
 
-  // Re-establish if the tab regains focus (covers returning from /listener page)
+  // Re-establish when tab regains focus (covers returning from /listener call page)
   useEffect(() => {
     const onFocus = () => {
       if (!stompRef.current?.connected && !isConnectingRef.current && userIdRef.current) {
@@ -193,7 +190,7 @@ export function ListenerSocketProvider({
     <ListenerSocketContext.Provider value={{ incomingCall, acceptCall, rejectCall }}>
       {children}
 
-      {/* ── Global incoming-call overlay ── visible on every listener page ── */}
+      {/* Global incoming-call overlay — appears on every listener page except /listener */}
       {incomingCall && pathname !== "/listener" && (
         <div
           style={{
@@ -222,8 +219,7 @@ export function ListenerSocketProvider({
                 width: 72,
                 height: 72,
                 borderRadius: "50%",
-                background:
-                  incomingCall.callType === "VOICE" ? "#22c55e22" : "#3b82f622",
+                background: incomingCall.callType === "VOICE" ? "#22c55e22" : "#3b82f622",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -249,15 +245,9 @@ export function ListenerSocketProvider({
               <button
                 onClick={rejectCall}
                 style={{
-                  flex: 1,
-                  padding: "14px",
-                  background: "#ef444422",
-                  color: "#ef4444",
-                  border: "1px solid #ef444444",
-                  borderRadius: 12,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
+                  flex: 1, padding: "14px", background: "#ef444422",
+                  color: "#ef4444", border: "1px solid #ef444444",
+                  borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer",
                 }}
               >
                 ✕ Decline
@@ -265,15 +255,9 @@ export function ListenerSocketProvider({
               <button
                 onClick={acceptCall}
                 style={{
-                  flex: 1,
-                  padding: "14px",
-                  background: "#22c55e",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 12,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
+                  flex: 1, padding: "14px", background: "#22c55e",
+                  color: "#fff", border: "none",
+                  borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer",
                 }}
               >
                 ✓ Accept
