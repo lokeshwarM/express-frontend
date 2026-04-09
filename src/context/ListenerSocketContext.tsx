@@ -30,6 +30,50 @@ export function useListenerSocket() {
   return useContext(ListenerSocketContext);
 }
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeIncomingCallMessage(raw: unknown): IncomingCall | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+
+  const eventType = String(data.type ?? data.eventType ?? "").toLowerCase();
+  const status = String(data.status ?? (data.session as Record<string, unknown> | undefined)?.status ?? "").toUpperCase();
+
+  const sessionIdValue =
+    data.sessionId ??
+    (data.session as Record<string, unknown> | undefined)?.id ??
+    data.id;
+  const sessionId = typeof sessionIdValue === "string" ? sessionIdValue : "";
+
+  const callTypeValue =
+    data.callType ??
+    data.sessionType ??
+    (data.session as Record<string, unknown> | undefined)?.type ??
+    "VOICE";
+  const callType = typeof callTypeValue === "string" ? callTypeValue : "VOICE";
+
+  const isIncomingEvent =
+    eventType === "incoming_call" ||
+    eventType === "incoming-call" ||
+    eventType === "incomingcall" ||
+    eventType === "call_created" ||
+    status === "CREATED";
+
+  if (!isIncomingEvent || !sessionId) return null;
+
+  return { sessionId, callType };
+}
+
 export function ListenerSocketProvider({
   children,
 }: {
@@ -54,12 +98,12 @@ export function ListenerSocketProvider({
       reconnectDelay: 5000,
       onConnect: () => {
         client.subscribe(`/topic/listener/${userId}`, (msg) => {
-          const data = JSON.parse(msg.body);
-          if (data.type === "incoming_call") {
-            setIncomingCall({
-              sessionId: data.sessionId,
-              callType: data.callType,
-            });
+          try {
+            const data = JSON.parse(msg.body) as unknown;
+            const normalizedCall = normalizeIncomingCallMessage(data);
+            if (normalizedCall) setIncomingCall(normalizedCall);
+          } catch {
+            // Ignore malformed messages
           }
         });
       },
@@ -74,29 +118,24 @@ export function ListenerSocketProvider({
     const token = localStorage.getItem("token");
     if (!token) return;
 
-    try {
-      // Decode JWT payload (no library needed — just base64)
-      const payload = JSON.parse(atob(token.split(".")[1]));
-      const role: string = payload.role || "";
+    const payload = decodeJwtPayload(token);
+    const role = String(payload?.role ?? "").toUpperCase();
 
-      // Only connect for listeners
-      if (role !== "LISTENER") return;
+    // Only connect for listeners
+    if (role !== "LISTENER") return;
 
-      // Fetch the real user ID from the /users/me endpoint
-      fetch("/api/users/me", {
-        headers: { Authorization: `Bearer ${token}` },
+    // Fetch the real user ID from the /users/me endpoint
+    fetch("/api/users/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((body) => {
+        const userId: string = body?.data?.id;
+        if (!userId) return;
+        userIdRef.current = userId;
+        connect(userId);
       })
-        .then((r) => r.json())
-        .then((body) => {
-          const userId: string = body?.data?.id;
-          if (!userId) return;
-          userIdRef.current = userId;
-          connect(userId);
-        })
-        .catch(() => {/* silent — not a listener or not logged in */});
-    } catch {
-      // Invalid token — ignore
-    }
+      .catch(() => {/* silent — not a listener or not logged in */});
 
     return () => {
       stompRef.current?.deactivate();
