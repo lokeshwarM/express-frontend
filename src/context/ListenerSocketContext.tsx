@@ -83,10 +83,21 @@ export function ListenerSocketProvider({
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const stompRef = useRef<Client | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const isConnectingRef = useRef(false);
 
-  // Connect (or reconnect) once we know the userId
+  // Build and activate a fresh STOMP client for the given userId.
+  // Always tears down any prior client before creating a new one.
   const connect = useCallback((userId: string) => {
-    if (stompRef.current?.connected) return; // already connected
+    // Guard: don't open a second connection if one is already alive
+    if (stompRef.current?.connected) return;
+    if (isConnectingRef.current) return;
+    isConnectingRef.current = true;
+
+    // Tear down any stale / disconnected client
+    if (stompRef.current) {
+      try { stompRef.current.deactivate(); } catch { /* ignore */ }
+      stompRef.current = null;
+    }
 
     const WS_BASE =
       typeof window !== "undefined" && window.location.protocol === "https:"
@@ -95,8 +106,11 @@ export function ListenerSocketProvider({
 
     const client = new Client({
       webSocketFactory: () => new SockJS(`${WS_BASE}/ws`),
+      // STOMP's built-in reconnect re-runs onConnect, which re-subscribes
       reconnectDelay: 5000,
       onConnect: () => {
+        isConnectingRef.current = false;
+        // Re-subscribe every time the socket connects/reconnects
         client.subscribe(`/topic/listener/${userId}`, (msg) => {
           try {
             const data = JSON.parse(msg.body) as unknown;
@@ -107,11 +121,22 @@ export function ListenerSocketProvider({
           }
         });
       },
+      onDisconnect: () => { isConnectingRef.current = false; },
+      onStompError: ()  => { isConnectingRef.current = false; },
     });
 
     client.activate();
     stompRef.current = client;
   }, []);
+
+  // Called whenever we need to ensure the socket is alive (e.g. back from call page)
+  const ensureConnected = useCallback(() => {
+    const userId = userIdRef.current;
+    if (!userId) return;
+    if (!stompRef.current?.connected && !isConnectingRef.current) {
+      connect(userId);
+    }
+  }, [connect]);
 
   // Resolve userId from JWT token on mount (works on every page)
   useEffect(() => {
@@ -138,14 +163,34 @@ export function ListenerSocketProvider({
       .catch(() => {/* silent — not a listener or not logged in */});
 
     return () => {
+      // Deactivate only when the provider genuinely unmounts (e.g. full logout)
       stompRef.current?.deactivate();
+      stompRef.current = null;
+      isConnectingRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-check socket health whenever the tab regains focus or visibility.
+  // This covers the case where the listener navigates back from /listener
+  // and the STOMP client has gone stale / been closed by the call page.
+  useEffect(() => {
+    const handleFocus = () => ensureConnected();
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") ensureConnected();
+    };
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [ensureConnected]);
+
   const acceptCall = useCallback(() => {
     if (!incomingCall) return;
     const { sessionId, callType } = incomingCall;
+    // Clear popup immediately so it doesn't flash on the call page
     setIncomingCall(null);
     router.push(`/listener?sessionId=${sessionId}&type=${callType}`);
   }, [incomingCall, router]);

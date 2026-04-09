@@ -1,11 +1,14 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useCallContext } from "@/context/CallContext";
 
 export default function IncomingCallPopup() {
   const { incomingCall, acceptCall, rejectCall } = useCallContext();
+  const pathname = usePathname();
 
-  if (!incomingCall) return null;
+  // Don't show the popup while listener is already on the active call page
+  if (!incomingCall || pathname === "/listener") return null;
 
   const isVoice = incomingCall.type === "VOICE";
 

@@ -205,9 +205,20 @@ export default function ListenerCallPage() {
     }
   };
 
+  // Restore availability so the server can send the next call
+  const restoreAvailability = () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch("/api/listeners/me/availability?available=true", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  };
+
   const handleRemoteEnd = () => {
     if (endedRef.current) return;
     endedRef.current = true;
+    restoreAvailability();
     cleanup();
     setTimeout(() => router.push("/listener-dashboard"), 800);
   };
@@ -336,6 +347,7 @@ export default function ListenerCallPage() {
     } catch (e) {
       console.error("End session error:", e);
     } finally {
+      restoreAvailability();
       cleanup();
       router.push("/listener-dashboard");
     }
