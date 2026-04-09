@@ -1,7 +1,5 @@
 import { Suspense } from "react";
 import { ListenerSocketProvider } from "@/context/ListenerSocketContext";
-import { CallProvider } from "@/context/CallContext";
-import IncomingCallPopup from "@/components/IncomingCallPopup";
 
 export default function RootLayout({
   children,
@@ -30,13 +28,9 @@ export default function RootLayout({
           }
         >
           {/* ListenerSocketProvider keeps the WebSocket alive across ALL pages.
-              It only connects when the logged-in user is a LISTENER. */}
-          <ListenerSocketProvider>
-            <CallProvider>
-              <IncomingCallPopup />
-              {children}
-            </CallProvider>
-          </ListenerSocketProvider>
+              It only connects when the logged-in user is a LISTENER.
+              The incoming-call popup is rendered directly inside the provider. */}
+          <ListenerSocketProvider>{children}</ListenerSocketProvider>
         </Suspense>
       </body>
     </html>
