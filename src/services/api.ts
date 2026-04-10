@@ -321,8 +321,9 @@ export const api = {
       headers: authHeaders(),
       body: JSON.stringify({ sessionId, reason, confidenceScore: 1.0 }),
     });
-    const data = await jsonOrThrow(res);
-    if (!data.success) throw new Error(data.message || "Failed to flag");
+    if (!res.ok) {
+      throw new Error(`Failed to flag: ${res.status}`);
+    }
   },
 
   //  Submit review after session
