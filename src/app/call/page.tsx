@@ -296,15 +296,30 @@ export default function CallPage() {
     try {
       await api.flagListener(sessionId, finalReason);
       setFlagDone(true);
-      // After showing success ✅ for 1.5s, close modal then end the session
+      // Show ✅ for 1.5s then end session and redirect — no handleEndCall()
+      // because it has a guard (endedRef) that can silently block execution.
       setTimeout(async () => {
+        // Prevent double-end if listener also hung up simultaneously
+        if (endedRef.current) {
+          router.push("/dashboard");
+          return;
+        }
+        endedRef.current = true;
         setShowFlagModal(false);
-        setFlagDone(false);
-        setFlagReason("");
-        setFlagDescription("");
-        // Directly end the session — only user-triggered flags end the call.
-        // AI flags come from the backend and never trigger this path.
-        await handleEndCall();
+
+        // Tell listener the call ended
+        if (stompRef.current?.connected) {
+          stompRef.current.publish({
+            destination: "/app/signal",
+            body: JSON.stringify({ type: "end", sessionId }),
+          });
+        }
+
+        // End session on backend
+        try { await api.endSession(sessionId); } catch { /* navigate anyway */ }
+
+        cleanup();
+        router.push("/dashboard");
       }, 1500);
     } catch (e) {
       console.error("Flag error:", e);
