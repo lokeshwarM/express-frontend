@@ -124,11 +124,17 @@ export default function CallPage() {
     }
   };
 
-  const handleRemoteEnd = () => {
+  const handleRemoteEnd = (rejected = false) => {
     if (endedRef.current) return;
     endedRef.current = true;
     cleanup();
-    setTimeout(() => router.push("/dashboard"), 800);
+    
+    if (rejected) {
+      setTimeout(() => router.push("/dashboard"), 800);
+    } else {
+      setEndedSessionId(sessionId);
+      setShowRatingModal(true);
+    }
   };
 
   const connectWebSocket = (pc: RTCPeerConnection) => {
@@ -176,7 +182,7 @@ export default function CallPage() {
           }
 
           if (data.type === "end") handleRemoteEnd();
-          if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(); }
+          if (data.type === "reject") { alert("Call rejected ❌"); handleRemoteEnd(true); }
         });
 
         client.subscribe(`/topic/session/${sessionId}`, (msg) => {
