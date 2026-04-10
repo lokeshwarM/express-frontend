@@ -296,13 +296,16 @@ export default function CallPage() {
     try {
       await api.flagListener(sessionId, finalReason);
       setFlagDone(true);
-      setTimeout(() => { 
-        setShowFlagModal(false); 
-        setFlagDone(false); 
-        setFlagReason(""); 
+      // After showing success ✅ for 1.5s, close modal then end the session
+      setTimeout(async () => {
+        setShowFlagModal(false);
+        setFlagDone(false);
+        setFlagReason("");
         setFlagDescription("");
-        handleEndCall();
-      }, 2000);
+        // Directly end the session — only user-triggered flags end the call.
+        // AI flags come from the backend and never trigger this path.
+        await handleEndCall();
+      }, 1500);
     } catch (e) {
       console.error("Flag error:", e);
     } finally {
