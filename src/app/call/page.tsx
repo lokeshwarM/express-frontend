@@ -52,6 +52,7 @@ export default function CallPage() {
   const [flagReason, setFlagReason] = useState("");
   const [flagging, setFlagging] = useState(false);
   const [flagDone, setFlagDone] = useState(false);
+  const [flagDescription, setFlagDescription] = useState("");
 
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [rating, setRating] = useState(0);
@@ -291,10 +292,17 @@ export default function CallPage() {
   const handleSubmitFlag = async () => {
     if (!flagReason) return;
     setFlagging(true);
+    const finalReason = flagDescription ? `${flagReason}. Details: ${flagDescription}` : flagReason;
     try {
-      await api.flagListener(sessionId, flagReason);
+      await api.flagListener(sessionId, finalReason);
       setFlagDone(true);
-      setTimeout(() => { setShowFlagModal(false); setFlagDone(false); setFlagReason(""); }, 2000);
+      setTimeout(() => { 
+        setShowFlagModal(false); 
+        setFlagDone(false); 
+        setFlagReason(""); 
+        setFlagDescription("");
+        handleEndCall();
+      }, 2000);
     } catch (e) {
       console.error("Flag error:", e);
     } finally {
@@ -364,6 +372,18 @@ export default function CallPage() {
                         fontSize: 14, cursor: "pointer", fontWeight: flagReason === reason ? 600 : 400,
                       }}>{reason}</button>
                     ))}
+                    <textarea 
+                      placeholder="Describe what happened (optional)..."
+                      value={flagDescription}
+                      onChange={(e) => setFlagDescription(e.target.value)}
+                      rows={3}
+                      style={{
+                        width: "100%", background: "#111", border: "1px solid #2a2a2a",
+                        borderRadius: 10, padding: "12px 14px", color: "#fff",
+                        fontSize: 14, outline: "none", resize: "none",
+                        boxSizing: "border-box", marginTop: 8
+                      }}
+                    />
                   </div>
                   <button onClick={handleSubmitFlag} disabled={!flagReason || flagging} style={{
                     width: "100%", padding: "14px",
