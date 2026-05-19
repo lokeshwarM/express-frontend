@@ -11,7 +11,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem("token");
 
     if (!token) {
-      window.location.replace("/");
+      window.location.replace("/login");
       return;
     }
 
@@ -19,12 +19,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       const payload = JSON.parse(atob(token.split(".")[1]));
       if (payload.exp * 1000 < Date.now()) {
         localStorage.removeItem("token");
-        window.location.replace("/");
+        window.location.replace("/login");
         return;
       }
     } catch {
       localStorage.removeItem("token");
-      window.location.replace("/");
+      window.location.replace("/login");
       return;
     }
 

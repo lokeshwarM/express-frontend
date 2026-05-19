@@ -315,7 +315,7 @@ export default function SignupPage() {
 
             <p style={{ marginTop: 20, textAlign: "center", color: "#555", fontSize: 13 }}>
               Already have an account?{" "}
-              <Link href="/" style={{ color: "#fff", textDecoration: "none" }}>Sign in</Link>
+              <Link href="/login" style={{ color: "#fff", textDecoration: "none" }}>Sign in</Link>
             </p>
           </>
         )}

@@ -53,7 +53,7 @@ export default function ListenerHistoryPage() {
         setSessions(s || []);
         setTransactions(t || []);
       })
-      .catch(() => router.push("/"))
+      .catch(() => router.push("/login"))
       .finally(() => setLoading(false));
   }, []);
 

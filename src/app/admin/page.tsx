@@ -108,8 +108,8 @@ export default function AdminPanel() {
 
   useEffect(() => {
     api.getMe()
-      .then((u) => { if (u.role !== "ADMIN") router.push("/"); })
-      .catch(() => router.push("/"));
+      .then((u) => { if (u.role !== "ADMIN") router.push("/login"); })
+      .catch(() => router.push("/login"));
   }, []);
 
   const loadSection = useCallback(async (sec: Section) => {

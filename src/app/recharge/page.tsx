@@ -23,7 +23,7 @@ export default function RechargePage() {
   }, []);
 
   useEffect(() => {
-    api.getMe().then(setUser).catch(() => router.push("/"));
+    api.getMe().then(setUser).catch(() => router.push("/login"));
     api.getBalance().then(setBalance).catch(() => {});
   }, []);
 

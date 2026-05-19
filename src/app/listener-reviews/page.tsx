@@ -47,7 +47,7 @@ export default function ListenerReviewsPage() {
         setReviews(r || []);
         setFlags(f || []);
       })
-      .catch(() => router.push("/"))
+      .catch(() => router.push("/login"))
       .finally(() => setLoading(false));
   }, []);
 

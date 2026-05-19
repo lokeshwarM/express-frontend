@@ -57,7 +57,7 @@ export default function HistoryPage() {
   useEffect(() => {
     Promise.all([api.getSessionHistory(), api.getTransactions()])
       .then(([s, t]) => { setSessions(s || []); setTransactions(t || []); })
-      .catch(() => router.push("/"))
+      .catch(() => router.push("/login"))
       .finally(() => setLoading(false));
   }, []);
 

@@ -181,7 +181,7 @@ export default function VerifyOtpPage() {
         </div>
 
         <button
-          onClick={() => router.push("/")}
+          onClick={() => router.push("/login")}
           style={{
             marginTop: 16, background: "transparent",
             border: "none", color: "#444", fontSize: 13, cursor: "pointer",

@@ -77,7 +77,7 @@ export default function ForgotPasswordPage() {
         </button>
 
         <button
-          onClick={() => router.push("/")}
+          onClick={() => router.push("/login")}
           style={{
             marginTop: 16, width: "100%",
             background: "transparent", border: "none",

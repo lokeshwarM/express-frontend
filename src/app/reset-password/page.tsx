@@ -29,7 +29,7 @@ export default function ResetPasswordPage() {
     try {
       await api.resetPassword(email, otp, password);
       alert("Password reset successful! Please login.");
-      router.push("/");
+      router.push("/login");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Reset failed");
     } finally {

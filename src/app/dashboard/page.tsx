@@ -37,7 +37,7 @@ export default function Dashboard() {
         // Load saved mood
         api.getUserMood().then(setSelectedMood).catch(() => {});
       })
-      .catch(() => router.push("/"));
+      .catch(() => router.push("/login"));
   }, []);
 
   const handleMoodSelect = async (mood: string) => {

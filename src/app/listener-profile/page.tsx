@@ -16,7 +16,7 @@ export default function ListenerProfilePage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getMe().then(setUser).catch(() => router.push("/"));
+    api.getMe().then(setUser).catch(() => router.push("/login"));
   }, []);
 
   const handleChangePassword = async () => {

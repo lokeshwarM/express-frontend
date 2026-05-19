@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@stomp/stompjs": "^7.3.0",
+    "framer-motion": "^12.39.0",
     "next": "^16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",

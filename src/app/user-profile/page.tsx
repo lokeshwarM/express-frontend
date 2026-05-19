@@ -30,7 +30,7 @@ export default function UserProfilePage() {
   const [memory, setMemory] = useState<Memory | null>(null);
 
   useEffect(() => {
-    api.getMe().then(setUser).catch(() => router.push("/"));
+    api.getMe().then(setUser).catch(() => router.push("/login"));
     api.getUserMemory().then(setMemory).catch(() => {});
   }, []);
 

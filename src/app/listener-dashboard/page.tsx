@@ -50,7 +50,7 @@ export default function ListenerDashboard() {
         api.getBalance().then(setBalance);
         api.getListenerStats().then(setStats).catch(() => {});
       })
-      .catch(() => router.push("/"));
+      .catch(() => router.push("/login"));
   }, []);
 
   const toggleAvailability = async () => {
